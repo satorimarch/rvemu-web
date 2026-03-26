@@ -1,0 +1,3 @@
+[submodule "riscv-emulator"]
+	path = riscv-emulator
+	url = https://github.com/WanDejun/riscv-emulator.git
