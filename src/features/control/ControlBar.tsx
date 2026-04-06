@@ -11,7 +11,6 @@ type BuiltInProgram = {
 export function ControlBar() {
   const [format, setFormat] = useState<ProgramFormat>("elf");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [pendingLoad, setPendingLoad] = useState(false);
   const [builtInPrograms, setBuiltInPrograms] = useState<BuiltInProgram[]>([]);
   const [selectedBuiltIn, setSelectedBuiltIn] = useState<string>("");
   const [hasBuiltIns, setHasBuiltIns] = useState(false);
@@ -43,7 +42,7 @@ export function ControlBar() {
   const onFileChange = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0] ?? null;
     setSelectedFile(file);
-    setPendingLoad(file !== null);
+    setSelectedBuiltIn(""); // Clear built-in selection
     const name = file?.name.toLowerCase() ?? "";
     if (name.endsWith(".bin")) {
       setFormat("bin");
@@ -52,33 +51,33 @@ export function ControlBar() {
     }
   };
 
-  const onLoad = async () => {
-    if (!selectedFile) return;
-    await loadProgram(selectedFile, format);
-    if (useEmulatorStore.getState().emulator) {
-      setPendingLoad(false);
+  const onBuiltInChange = (value: string) => {
+    setSelectedBuiltIn(value);
+    setSelectedFile(null); // Clear file selection
+    if (value) {
+      setFormat("elf"); // Built-in programs are always ELF
     }
   };
 
-  const onLoadBuiltIn = async () => {
-    if (!selectedBuiltIn) return;
-    await loadProgramFromUrl(`/test-programs/${selectedBuiltIn}`, "elf");
-    setSelectedBuiltIn("");
+  const onLoad = async () => {
+    if (selectedFile) {
+      await loadProgram(selectedFile, format);
+    } else if (selectedBuiltIn) {
+      await loadProgramFromUrl(`/test-programs/${selectedBuiltIn}`, "elf");
+    }
   };
 
-  const actionLocked = loading || !emulator || pendingLoad;
+  const hasSelection = selectedFile !== null || selectedBuiltIn !== "";
+  const actionLocked = loading || !emulator;
 
   return (
     <section className="control-bar panel">
       <div className="control-row">
-        <input type="file" onChange={onFileChange} />
+        <input type="file" onChange={onFileChange} value="" />
         <select value={format} onChange={(e) => setFormat(e.target.value as ProgramFormat)}>
           <option value="elf">ELF</option>
           <option value="bin">BIN</option>
         </select>
-        <button onClick={onLoad} disabled={!selectedFile || loading}>
-          {loading ? "Loading..." : "Load"}
-        </button>
       </div>
 
       {hasBuiltIns && (
@@ -86,7 +85,7 @@ export function ControlBar() {
           <label>Built-in Programs:</label>
           <select 
             value={selectedBuiltIn} 
-            onChange={(e) => setSelectedBuiltIn(e.target.value)}
+            onChange={(e) => onBuiltInChange(e.target.value)}
             disabled={loading}
           >
             <option value="">-- Select a program --</option>
@@ -94,11 +93,14 @@ export function ControlBar() {
               <option key={p.id} value={p.file}>{p.id}</option>
             ))}
           </select>
-          <button onClick={onLoadBuiltIn} disabled={!selectedBuiltIn || loading}>
-            Load
-          </button>
         </div>
       )}
+
+      <div className="control-row">
+        <button onClick={onLoad} disabled={!hasSelection || loading}>
+          {loading ? "Loading..." : "Load"}
+        </button>
+      </div>
 
       <div className="control-row">
         <button
@@ -121,7 +123,11 @@ export function ControlBar() {
         </button>
       </div>
 
-      {pendingLoad ? <div className="hint">A new file is selected. Click Load to apply it.</div> : null}
+      {hasSelection && !loading && !emulator ? (
+        <div className="hint">
+          {selectedFile ? `Selected: ${selectedFile.name}` : `Selected: ${selectedBuiltIn.replace('.elf', '')}`}. Click Load to start.
+        </div>
+      ) : null}
     </section>
   );
 }
