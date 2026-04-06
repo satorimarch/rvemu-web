@@ -114,7 +114,7 @@ describe("ControlBar - Load State Management", () => {
   describe("Built-in Programs", () => {
     beforeEach(() => {
       vi.mocked(global.fetch).mockImplementation((url) => {
-        if (url === "/test-programs/manifest.json") {
+        if (String(url).endsWith("/test-programs/manifest.json")) {
           return Promise.resolve({
             ok: true,
             json: async () => ({
@@ -171,7 +171,10 @@ describe("ControlBar - Load State Management", () => {
       const loadButton = screen.getByRole("button", { name: /load/i });
       await user.click(loadButton);
 
-      expect(mockLoadProgramFromUrl).toHaveBeenCalledWith("/test-programs/fib.elf", "elf");
+      expect(mockLoadProgramFromUrl).toHaveBeenCalledWith(
+        expect.stringMatching(/\/test-programs\/fib\.elf$/),
+        "elf"
+      );
       expect(mockLoadProgram).not.toHaveBeenCalled();
     });
 
@@ -205,7 +208,7 @@ describe("ControlBar - Load State Management", () => {
   describe("Mutual Exclusion", () => {
     beforeEach(() => {
       vi.mocked(global.fetch).mockImplementation((url) => {
-        if (url === "/test-programs/manifest.json") {
+        if (String(url).endsWith("/test-programs/manifest.json")) {
           return Promise.resolve({
             ok: true,
             json: async () => ({

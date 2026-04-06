@@ -15,6 +15,7 @@ export function ControlBar() {
   const [selectedBuiltIn, setSelectedBuiltIn] = useState<string>("");
   const [hasBuiltIns, setHasBuiltIns] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const testProgramsBaseUrl = `${import.meta.env.BASE_URL}test-programs`;
 
   const {
     loadProgram,
@@ -29,7 +30,7 @@ export function ControlBar() {
   } = useEmulatorStore();
 
   useEffect(() => {
-    fetch("/test-programs/manifest.json")
+    fetch(`${testProgramsBaseUrl}/manifest.json`)
       .then(r => r.ok ? r.json() : Promise.reject())
       .then(data => {
         setBuiltInPrograms(data.programs || []);
@@ -38,7 +39,7 @@ export function ControlBar() {
       .catch(() => {
         setHasBuiltIns(false);
       });
-  }, []);
+  }, [testProgramsBaseUrl]);
 
   const onFileChange = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0] ?? null;
@@ -71,7 +72,7 @@ export function ControlBar() {
     if (selectedFile) {
       await loadProgram(selectedFile, format);
     } else if (selectedBuiltIn) {
-      await loadProgramFromUrl(`/test-programs/${selectedBuiltIn}`, "elf");
+      await loadProgramFromUrl(`${testProgramsBaseUrl}/${selectedBuiltIn}`, "elf");
     } else {
       return;
     }
