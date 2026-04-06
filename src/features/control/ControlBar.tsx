@@ -1,4 +1,4 @@
-import { ChangeEvent, useEffect, useState } from "react";
+import { ChangeEvent, useEffect, useRef, useState } from "react";
 import { EmulatorStatus, useEmulatorStore } from "@/features/emulator/useEmulatorStore";
 
 type ProgramFormat = "elf" | "bin";
@@ -14,6 +14,7 @@ export function ControlBar() {
   const [builtInPrograms, setBuiltInPrograms] = useState<BuiltInProgram[]>([]);
   const [selectedBuiltIn, setSelectedBuiltIn] = useState<string>("");
   const [hasBuiltIns, setHasBuiltIns] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const {
     loadProgram,
@@ -54,16 +55,31 @@ export function ControlBar() {
   const onBuiltInChange = (value: string) => {
     setSelectedBuiltIn(value);
     setSelectedFile(null); // Clear file selection
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
     if (value) {
       setFormat("elf"); // Built-in programs are always ELF
     }
   };
 
   const onLoad = async () => {
+    if (loading) {
+      return;
+    }
+
     if (selectedFile) {
       await loadProgram(selectedFile, format);
     } else if (selectedBuiltIn) {
       await loadProgramFromUrl(`/test-programs/${selectedBuiltIn}`, "elf");
+    } else {
+      return;
+    }
+
+    setSelectedFile(null);
+    setSelectedBuiltIn("");
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
     }
   };
 
@@ -73,7 +89,7 @@ export function ControlBar() {
   return (
     <section className="control-bar panel">
       <div className="control-row">
-        <input type="file" onChange={onFileChange} value="" />
+        <input ref={fileInputRef} type="file" onChange={onFileChange} />
         <select value={format} onChange={(e) => setFormat(e.target.value as ProgramFormat)}>
           <option value="elf">ELF</option>
           <option value="bin">BIN</option>
@@ -120,7 +136,7 @@ export function ControlBar() {
         </button>
       </div>
 
-      {hasSelection && !loading && !emulator ? (
+      {hasSelection && !loading ? (
         <div className="hint">
           {selectedFile ? `Selected: ${selectedFile.name}` : `Selected: ${selectedBuiltIn.replace('.elf', '')}`}. Click Load to start.
         </div>

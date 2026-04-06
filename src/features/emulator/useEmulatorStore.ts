@@ -11,6 +11,71 @@ export enum EmulatorStatus {
 
 const REG_COUNT = 32;
 
+function disposeEmulator(emulator: WasmEmulator | null): void {
+  if (!emulator) {
+    return;
+  }
+
+  const maybeDisposable = emulator as unknown as { free?: () => void };
+  if (typeof maybeDisposable.free === "function") {
+    maybeDisposable.free();
+  }
+}
+
+type StoreSet = (partial: Partial<EmulatorState> | ((state: EmulatorState) => Partial<EmulatorState>)) => void;
+type StoreGet = () => EmulatorState;
+
+function setLoadingState(set: StoreSet): void {
+  set({
+    loading: true,
+    emulator: null,
+    error: null,
+    executionState: EmulatorStatus.Paused,
+    boardHalted: false,
+    animationFrameId: null,
+    uartText: "",
+    pc: 0n,
+    cycles: 0n,
+    regs: Array.from({ length: REG_COUNT }, () => 0n)
+  });
+}
+
+function replaceEmulator(
+  set: StoreSet,
+  get: StoreGet,
+  nextEmulator: WasmEmulator,
+  previousEmulator: WasmEmulator | null
+): void {
+  disposeEmulator(previousEmulator);
+
+  set({
+    emulator: nextEmulator,
+    loading: false,
+    executionState: EmulatorStatus.Paused,
+    boardHalted: nextEmulator.is_halted()
+  });
+  get().refreshDebug();
+}
+
+function restorePreviousEmulator(
+  set: StoreSet,
+  get: StoreGet,
+  previousEmulator: WasmEmulator | null,
+  error: unknown
+): void {
+  set({
+    emulator: previousEmulator,
+    loading: false,
+    executionState: EmulatorStatus.Paused,
+    boardHalted: previousEmulator ? previousEmulator.is_halted() : false,
+    error: error instanceof Error ? error.message : String(error)
+  });
+
+  if (previousEmulator) {
+    get().refreshDebug();
+  }
+}
+
 function readRegisters(emulator: WasmEmulator): bigint[] {
   const regs: bigint[] = [];
   for (let i = 0; i < REG_COUNT; i += 1) {
@@ -58,66 +123,42 @@ export const useEmulatorStore = create<EmulatorState>((set, get) => ({
   animationFrameId: null,
 
   loadProgram: async (file, format) => {
-    const { animationFrameId } = get();
+    if (get().loading) {
+      return;
+    }
+
+    const { animationFrameId, emulator: previousEmulator } = get();
     if (animationFrameId !== null) {
       window.cancelAnimationFrame(animationFrameId);
     }
 
-    set({
-      loading: true,
-      emulator: null,
-      error: null,
-      executionState: EmulatorStatus.Paused,
-      boardHalted: false,
-      animationFrameId: null,
-      uartText: "",
-      pc: 0n,
-      cycles: 0n,
-      regs: Array.from({ length: REG_COUNT }, () => 0n)
-    });
+    setLoadingState(set);
 
     try {
       const bytes = new Uint8Array(await file.arrayBuffer());
       const wasm = await loadWasmModule();
-      const emulator =
+      const nextEmulator =
         format === "elf"
           ? wasm.WasmEmulator.from_elf_bytes(bytes)
           : wasm.WasmEmulator.from_bin_bytes(bytes);
 
-      set({
-        emulator,
-        loading: false,
-        executionState: EmulatorStatus.Paused,
-        boardHalted: emulator.is_halted()
-      });
-      get().refreshDebug();
+      replaceEmulator(set, get, nextEmulator, previousEmulator);
     } catch (error) {
-      set({
-        loading: false,
-        executionState: EmulatorStatus.Paused,
-        error: error instanceof Error ? error.message : String(error)
-      });
+      restorePreviousEmulator(set, get, previousEmulator, error);
     }
   },
 
   loadProgramFromUrl: async (url, format) => {
-    const { animationFrameId } = get();
+    if (get().loading) {
+      return;
+    }
+
+    const { animationFrameId, emulator: previousEmulator } = get();
     if (animationFrameId !== null) {
       window.cancelAnimationFrame(animationFrameId);
     }
 
-    set({
-      loading: true,
-      emulator: null,
-      error: null,
-      executionState: EmulatorStatus.Paused,
-      boardHalted: false,
-      animationFrameId: null,
-      uartText: "",
-      pc: 0n,
-      cycles: 0n,
-      regs: Array.from({ length: REG_COUNT }, () => 0n)
-    });
+    setLoadingState(set);
 
     try {
       const response = await fetch(url);
@@ -128,24 +169,14 @@ export const useEmulatorStore = create<EmulatorState>((set, get) => ({
       const arrayBuffer = await response.arrayBuffer();
       const bytes = new Uint8Array(arrayBuffer);
       const wasm = await loadWasmModule();
-      const emulator =
+      const nextEmulator =
         format === "elf"
           ? wasm.WasmEmulator.from_elf_bytes(bytes)
           : wasm.WasmEmulator.from_bin_bytes(bytes);
 
-      set({
-        emulator,
-        loading: false,
-        executionState: EmulatorStatus.Paused,
-        boardHalted: emulator.is_halted()
-      });
-      get().refreshDebug();
+      replaceEmulator(set, get, nextEmulator, previousEmulator);
     } catch (error) {
-      set({
-        loading: false,
-        executionState: EmulatorStatus.Paused,
-        error: error instanceof Error ? error.message : String(error)
-      });
+      restorePreviousEmulator(set, get, previousEmulator, error);
     }
   },
 

@@ -12,3 +12,5 @@ public/test-programs/
 
 # Toolchain cache (CI only)
 .cache/
+
+coverage/
