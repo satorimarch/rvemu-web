@@ -78,6 +78,9 @@ export function ControlBar() {
           <option value="elf">ELF</option>
           <option value="bin">BIN</option>
         </select>
+        <button onClick={onLoad} disabled={!hasSelection || loading}>
+          {loading ? "Loading..." : "Load"}
+        </button>
       </div>
 
       {hasBuiltIns && (
@@ -95,12 +98,6 @@ export function ControlBar() {
           </select>
         </div>
       )}
-
-      <div className="control-row">
-        <button onClick={onLoad} disabled={!hasSelection || loading}>
-          {loading ? "Loading..." : "Load"}
-        </button>
-      </div>
 
       <div className="control-row">
         <button
