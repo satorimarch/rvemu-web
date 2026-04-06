@@ -6,3 +6,9 @@ src/wasm-pkg/
 
 # TypeScript build cache
 *.tsbuildinfo
+
+# Test programs (generated during build, not committed)
+public/test-programs/
+
+# Toolchain cache (CI only)
+.cache/

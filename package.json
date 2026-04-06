@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "wasm:build": "cd ./riscv-emulator && wasm-pack build --target web --out-dir ../src/wasm-pkg -- --no-default-features --features web,riscv64"
+    "wasm:build": "cd ./riscv-emulator && wasm-pack build --target web --out-dir ../src/wasm-pkg -- --no-default-features --features web,riscv64",
+    "test-programs:build": "bash scripts/build-test-programs.sh && node scripts/generate-manifest.js"
   },
   "dependencies": {
     "react": "^18.3.1",

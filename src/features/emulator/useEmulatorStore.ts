@@ -32,6 +32,7 @@ type EmulatorState = {
   stepBudgetPerFrame: bigint;
   animationFrameId: number | null;
   loadProgram: (file: File, format: ProgramFormat) => Promise<void>;
+  loadProgramFromUrl: (url: string, format: ProgramFormat) => Promise<void>;
   stepOnce: () => Promise<void>;
   startRun: () => void;
   pauseRun: () => void;
@@ -77,6 +78,55 @@ export const useEmulatorStore = create<EmulatorState>((set, get) => ({
 
     try {
       const bytes = new Uint8Array(await file.arrayBuffer());
+      const wasm = await loadWasmModule();
+      const emulator =
+        format === "elf"
+          ? wasm.WasmEmulator.from_elf_bytes(bytes)
+          : wasm.WasmEmulator.from_bin_bytes(bytes);
+
+      set({
+        emulator,
+        loading: false,
+        executionState: EmulatorStatus.Paused,
+        boardHalted: emulator.is_halted()
+      });
+      get().refreshDebug();
+    } catch (error) {
+      set({
+        loading: false,
+        executionState: EmulatorStatus.Paused,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  },
+
+  loadProgramFromUrl: async (url, format) => {
+    const { animationFrameId } = get();
+    if (animationFrameId !== null) {
+      window.cancelAnimationFrame(animationFrameId);
+    }
+
+    set({
+      loading: true,
+      emulator: null,
+      error: null,
+      executionState: EmulatorStatus.Paused,
+      boardHalted: false,
+      animationFrameId: null,
+      uartText: "",
+      pc: 0n,
+      cycles: 0n,
+      regs: Array.from({ length: REG_COUNT }, () => 0n)
+    });
+
+    try {
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch program: ${response.status} ${response.statusText}`);
+      }
+      
+      const arrayBuffer = await response.arrayBuffer();
+      const bytes = new Uint8Array(arrayBuffer);
       const wasm = await loadWasmModule();
       const emulator =
         format === "elf"

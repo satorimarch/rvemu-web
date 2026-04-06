@@ -43,6 +43,23 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Cache RISC-V toolchain
+        id: cache-toolchain
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/rvemu-web/riscv-toolchain
+          key: riscv-toolchain-2026.03.28
+
+      - name: Download RISC-V toolchain
+        if: steps.cache-toolchain.outputs.cache-hit != 'true'
+        run: bash scripts/download-toolchain.sh
+
+      - name: Build test programs
+        run: bash scripts/build-test-programs.sh
+
+      - name: Generate test programs manifest
+        run: node scripts/generate-manifest.js
+
       - name: Build wasm package
         run: npm run wasm:build
 

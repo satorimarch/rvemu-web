@@ -1,15 +1,24 @@
-import { ChangeEvent, useState } from "react";
+import { ChangeEvent, useEffect, useState } from "react";
 import { EmulatorStatus, useEmulatorStore } from "@/features/emulator/useEmulatorStore";
 
 type ProgramFormat = "elf" | "bin";
+
+type BuiltInProgram = {
+  id: string;
+  file: string;
+};
 
 export function ControlBar() {
   const [format, setFormat] = useState<ProgramFormat>("elf");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [pendingLoad, setPendingLoad] = useState(false);
+  const [builtInPrograms, setBuiltInPrograms] = useState<BuiltInProgram[]>([]);
+  const [selectedBuiltIn, setSelectedBuiltIn] = useState<string>("");
+  const [hasBuiltIns, setHasBuiltIns] = useState(false);
 
   const {
     loadProgram,
+    loadProgramFromUrl,
     loading,
     executionState,
     startRun,
@@ -18,6 +27,18 @@ export function ControlBar() {
     clearUart,
     emulator
   } = useEmulatorStore();
+
+  useEffect(() => {
+    fetch("/test-programs/manifest.json")
+      .then(r => r.ok ? r.json() : Promise.reject())
+      .then(data => {
+        setBuiltInPrograms(data.programs || []);
+        setHasBuiltIns(data.programs.length > 0);
+      })
+      .catch(() => {
+        setHasBuiltIns(false);
+      });
+  }, []);
 
   const onFileChange = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0] ?? null;
@@ -39,6 +60,12 @@ export function ControlBar() {
     }
   };
 
+  const onLoadBuiltIn = async () => {
+    if (!selectedBuiltIn) return;
+    await loadProgramFromUrl(`/test-programs/${selectedBuiltIn}`, "elf");
+    setSelectedBuiltIn("");
+  };
+
   const actionLocked = loading || !emulator || pendingLoad;
 
   return (
@@ -53,6 +80,25 @@ export function ControlBar() {
           {loading ? "Loading..." : "Load"}
         </button>
       </div>
+
+      {hasBuiltIns && (
+        <div className="control-row">
+          <label>Built-in Programs:</label>
+          <select 
+            value={selectedBuiltIn} 
+            onChange={(e) => setSelectedBuiltIn(e.target.value)}
+            disabled={loading}
+          >
+            <option value="">-- Select a program --</option>
+            {builtInPrograms.map(p => (
+              <option key={p.id} value={p.file}>{p.id}</option>
+            ))}
+          </select>
+          <button onClick={onLoadBuiltIn} disabled={!selectedBuiltIn || loading}>
+            Load
+          </button>
+        </div>
+      )}
 
       <div className="control-row">
         <button
