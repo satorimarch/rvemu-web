@@ -57,6 +57,13 @@ jobs:
       - name: Build test programs
         run: bash scripts/build-test-programs.sh
 
+      - name: Download prebuilt Linux payload
+        run: |
+          mkdir -p public/test-programs
+          curl -fL --retry 3 --retry-all-errors \
+            -o public/test-programs/fw_payload.bin \
+            https://github.com/satorimarch/rvemu-web/releases/download/assets/fw_payload.bin
+
       - name: Generate test programs manifest
         run: node scripts/generate-manifest.js
 

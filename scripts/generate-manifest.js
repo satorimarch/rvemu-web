@@ -34,9 +34,11 @@ async function generateManifest() {
     // Ensure directory exists
     await mkdir(TEST_PROGRAMS_DIR, { recursive: true });
 
-    // Read ELF files
+    // Read built-in program files
     const files = await readdir(TEST_PROGRAMS_DIR);
-    const elfFiles = files.filter(f => f.endsWith(".elf")).sort();
+    const supportedFiles = files
+      .filter((file) => file.endsWith(".elf") || file.endsWith(".bin"))
+      .sort();
     
     const config = await readBuiltinProgramsConfig();
     const includeEnv = parseCsvList(process.env.BUILTIN_PROGRAMS_INCLUDE);
@@ -45,10 +47,11 @@ async function generateManifest() {
     const includeSet = new Set([...config.include, ...includeEnv]);
     const excludeSet = new Set([...config.exclude, ...excludeEnv]);
 
-    const programs = elfFiles
+    const programs = supportedFiles
       .map((file) => ({
-        id: file.replace(".elf", ""),
-        file
+        id: file.replace(/\.(elf|bin)$/u, ""),
+        file,
+        format: file.endsWith(".bin") ? "bin" : "elf"
       }))
       .filter((program) => {
         if (includeSet.size > 0 && !includeSet.has(program.id)) {

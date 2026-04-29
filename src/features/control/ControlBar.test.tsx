@@ -178,6 +178,40 @@ describe("ControlBar - Load State Management", () => {
       expect(mockLoadProgram).not.toHaveBeenCalled();
     });
 
+    it("should load built-in BIN program with bin format", async () => {
+      vi.mocked(global.fetch).mockImplementation((url) => {
+        if (String(url).endsWith("/test-programs/manifest.json")) {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              programs: [
+                { id: "fw_payload", file: "fw_payload.bin", format: "bin" }
+              ]
+            })
+          } as Response);
+        }
+        return Promise.reject(new Error("Not found"));
+      });
+
+      render(<ControlBar />);
+      const user = userEvent.setup();
+
+      await waitFor(() => {
+        expect(screen.getByText("Built-in Programs:")).toBeInTheDocument();
+      });
+
+      const builtInSelect = screen.getAllByRole("combobox")[1];
+      await user.selectOptions(builtInSelect, "fw_payload.bin");
+
+      const loadButton = screen.getByRole("button", { name: /load/i });
+      await user.click(loadButton);
+
+      expect(mockLoadProgramFromUrl).toHaveBeenCalledWith(
+        expect.stringMatching(/\/test-programs\/fw_payload\.bin$/),
+        "bin"
+      );
+    });
+
     it("should hide built-in section when manifest fails to load", async () => {
       vi.mocked(global.fetch).mockRejectedValue(new Error("404"));
 

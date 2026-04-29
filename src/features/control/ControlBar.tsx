@@ -6,6 +6,7 @@ type ProgramFormat = "elf" | "bin";
 type BuiltInProgram = {
   id: string;
   file: string;
+  format?: ProgramFormat;
 };
 
 export function ControlBar() {
@@ -60,7 +61,8 @@ export function ControlBar() {
       fileInputRef.current.value = "";
     }
     if (value) {
-      setFormat("elf"); // Built-in programs are always ELF
+      const selectedProgram = builtInPrograms.find((program) => program.file === value);
+      setFormat(selectedProgram?.format ?? "elf");
     }
   };
 
@@ -72,7 +74,11 @@ export function ControlBar() {
     if (selectedFile) {
       await loadProgram(selectedFile, format);
     } else if (selectedBuiltIn) {
-      await loadProgramFromUrl(`${testProgramsBaseUrl}/${selectedBuiltIn}`, "elf");
+      const selectedProgram = builtInPrograms.find((program) => program.file === selectedBuiltIn);
+      await loadProgramFromUrl(
+        `${testProgramsBaseUrl}/${selectedBuiltIn}`,
+        selectedProgram?.format ?? "elf"
+      );
     } else {
       return;
     }
