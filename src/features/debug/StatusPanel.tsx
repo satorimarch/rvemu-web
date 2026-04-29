@@ -6,7 +6,11 @@ function hex(value: bigint, width = 16): string {
 }
 
 export function StatusPanel() {
-  const { pc, cycles, regs, executionState, error } = useEmulatorStore();
+  const pc = useEmulatorStore((s) => s.pc);
+  const cycles = useEmulatorStore((s) => s.cycles);
+  const regs = useEmulatorStore((s) => s.regs);
+  const executionState = useEmulatorStore((s) => s.executionState);
+  const error = useEmulatorStore((s) => s.error);
 
   const regRows = useMemo(() => {
     return regs.map((value, index) => ({ name: `x${index.toString().padStart(2, "0")}`, value }));
@@ -33,6 +37,10 @@ export function StatusPanel() {
       </div>
 
       {error ? <div className="error-box">{error}</div> : null}
+
+      {executionState === EmulatorStatus.Running ? (
+        <div className="hint">Registers update after pause, step, or halt.</div>
+      ) : null}
 
       <div className="register-grid">
         {regRows.map((reg) => (

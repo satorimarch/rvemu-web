@@ -10,6 +10,7 @@ export enum EmulatorStatus {
 }
 
 const REG_COUNT = 32;
+const MAX_UART_TEXT_LENGTH = 1_000_000;
 
 function disposeEmulator(emulator: WasmEmulator | null): void {
   if (!emulator) {
@@ -84,6 +85,46 @@ function readRegisters(emulator: WasmEmulator): bigint[] {
   return regs;
 }
 
+function appendUartText(current: string, append: string): string {
+  if (append.length === 0) {
+    return current;
+  }
+
+  const next = current + append;
+  return next.length > MAX_UART_TEXT_LENGTH ? next.slice(-MAX_UART_TEXT_LENGTH) : next;
+}
+
+async function loadProgramBytes(
+  set: StoreSet,
+  get: StoreGet,
+  format: ProgramFormat,
+  readBytes: () => Promise<Uint8Array>
+): Promise<void> {
+  if (get().loading) {
+    return;
+  }
+
+  const { animationFrameId, emulator: previousEmulator } = get();
+  if (animationFrameId !== null) {
+    window.cancelAnimationFrame(animationFrameId);
+  }
+
+  setLoadingState(set);
+
+  try {
+    const bytes = await readBytes();
+    const wasm = await loadWasmModule();
+    const nextEmulator =
+      format === "elf"
+        ? wasm.WasmEmulator.from_elf_bytes(bytes)
+        : wasm.WasmEmulator.from_bin_bytes(bytes);
+
+    replaceEmulator(set, get, nextEmulator, previousEmulator);
+  } catch (error) {
+    restorePreviousEmulator(set, get, previousEmulator, error);
+  }
+}
+
 type EmulatorState = {
   emulator: WasmEmulator | null;
   loading: boolean;
@@ -123,61 +164,19 @@ export const useEmulatorStore = create<EmulatorState>((set, get) => ({
   animationFrameId: null,
 
   loadProgram: async (file, format) => {
-    if (get().loading) {
-      return;
-    }
-
-    const { animationFrameId, emulator: previousEmulator } = get();
-    if (animationFrameId !== null) {
-      window.cancelAnimationFrame(animationFrameId);
-    }
-
-    setLoadingState(set);
-
-    try {
-      const bytes = new Uint8Array(await file.arrayBuffer());
-      const wasm = await loadWasmModule();
-      const nextEmulator =
-        format === "elf"
-          ? wasm.WasmEmulator.from_elf_bytes(bytes)
-          : wasm.WasmEmulator.from_bin_bytes(bytes);
-
-      replaceEmulator(set, get, nextEmulator, previousEmulator);
-    } catch (error) {
-      restorePreviousEmulator(set, get, previousEmulator, error);
-    }
+    await loadProgramBytes(set, get, format, async () => new Uint8Array(await file.arrayBuffer()));
   },
 
   loadProgramFromUrl: async (url, format) => {
-    if (get().loading) {
-      return;
-    }
-
-    const { animationFrameId, emulator: previousEmulator } = get();
-    if (animationFrameId !== null) {
-      window.cancelAnimationFrame(animationFrameId);
-    }
-
-    setLoadingState(set);
-
-    try {
+    await loadProgramBytes(set, get, format, async () => {
       const response = await fetch(url);
       if (!response.ok) {
         throw new Error(`Failed to fetch program: ${response.status} ${response.statusText}`);
       }
-      
-      const arrayBuffer = await response.arrayBuffer();
-      const bytes = new Uint8Array(arrayBuffer);
-      const wasm = await loadWasmModule();
-      const nextEmulator =
-        format === "elf"
-          ? wasm.WasmEmulator.from_elf_bytes(bytes)
-          : wasm.WasmEmulator.from_bin_bytes(bytes);
 
-      replaceEmulator(set, get, nextEmulator, previousEmulator);
-    } catch (error) {
-      restorePreviousEmulator(set, get, previousEmulator, error);
-    }
+      const arrayBuffer = await response.arrayBuffer();
+      return new Uint8Array(arrayBuffer);
+    });
   },
 
   stepOnce: async () => {
@@ -193,8 +192,9 @@ export const useEmulatorStore = create<EmulatorState>((set, get) => ({
     try {
       emulator.step();
       const out = emulator.take_uart_output();
+      const append = out.length > 0 ? textDecoder.decode(out) : "";
       set((state) => ({
-        uartText: state.uartText + textDecoder.decode(out),
+        uartText: appendUartText(state.uartText, append),
         boardHalted: emulator.is_halted()
       }));
       get().refreshDebug();
@@ -229,7 +229,7 @@ export const useEmulatorStore = create<EmulatorState>((set, get) => ({
         const boardHalted = state.emulator.is_halted();
 
         set((s) => ({
-          uartText: append ? s.uartText + append : s.uartText,
+          uartText: appendUartText(s.uartText, append),
           cycles: state.emulator!.clock_cycles(),
           pc: state.emulator!.read_pc(),
           boardHalted

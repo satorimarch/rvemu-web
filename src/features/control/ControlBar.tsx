@@ -18,24 +18,23 @@ export function ControlBar() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const testProgramsBaseUrl = `${import.meta.env.BASE_URL}test-programs`;
 
-  const {
-    loadProgram,
-    loadProgramFromUrl,
-    loading,
-    executionState,
-    startRun,
-    pauseRun,
-    stepOnce,
-    clearUart,
-    emulator
-  } = useEmulatorStore();
+  const loadProgram = useEmulatorStore((s) => s.loadProgram);
+  const loadProgramFromUrl = useEmulatorStore((s) => s.loadProgramFromUrl);
+  const loading = useEmulatorStore((s) => s.loading);
+  const executionState = useEmulatorStore((s) => s.executionState);
+  const startRun = useEmulatorStore((s) => s.startRun);
+  const pauseRun = useEmulatorStore((s) => s.pauseRun);
+  const stepOnce = useEmulatorStore((s) => s.stepOnce);
+  const clearUart = useEmulatorStore((s) => s.clearUart);
+  const emulator = useEmulatorStore((s) => s.emulator);
 
   useEffect(() => {
     fetch(`${testProgramsBaseUrl}/manifest.json`)
       .then(r => r.ok ? r.json() : Promise.reject())
       .then(data => {
-        setBuiltInPrograms(data.programs || []);
-        setHasBuiltIns(data.programs.length > 0);
+        const programs = Array.isArray(data.programs) ? data.programs : [];
+        setBuiltInPrograms(programs);
+        setHasBuiltIns(programs.length > 0);
       })
       .catch(() => {
         setHasBuiltIns(false);

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { useEmulatorStore } from "./useEmulatorStore";
+import { EmulatorStatus, useEmulatorStore } from "./useEmulatorStore";
 import { createMockEmulator, createMockWasmModule } from "@/test/mocks";
 import * as wasmLoader from "./wasmLoader";
 
@@ -23,7 +23,7 @@ describe("useEmulatorStore - Load Functionality", () => {
       useEmulatorStore.setState({
         emulator: null,
         loading: false,
-        executionState: useEmulatorStore.getState().executionState,
+        executionState: EmulatorStatus.Paused,
         boardHalted: false,
         error: null,
         cycles: 0n,
@@ -463,6 +463,167 @@ describe("useEmulatorStore - Load Functionality", () => {
       expect(result.current.emulator).toBe(previousEmulator);
       expect(result.current.error).toContain("unreachable executed");
       expect((previousEmulator as unknown as { free: () => void }).free).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("Run Loop", () => {
+    let rafCallback: FrameRequestCallback | null;
+
+    beforeEach(() => {
+      rafCallback = null;
+      vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+        rafCallback = callback;
+        return 123;
+      });
+      vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => undefined);
+    });
+
+    it("should start running and execute one animation frame", () => {
+      const emulator = createMockEmulator({
+        continue_for_steps: vi.fn(() => 100_000n),
+        read_pc: vi.fn(() => 0x80000004n),
+        clock_cycles: vi.fn(() => 42n)
+      });
+
+      const { result } = renderHook(() => useEmulatorStore());
+
+      act(() => {
+        useEmulatorStore.setState({ emulator });
+        result.current.startRun();
+      });
+
+      expect(result.current.executionState).toBe(EmulatorStatus.Running);
+      expect(result.current.animationFrameId).toBe(123);
+      expect(rafCallback).not.toBe(null);
+
+      act(() => {
+        rafCallback?.(0);
+      });
+
+      expect(emulator.continue_for_steps).toHaveBeenCalledWith(100_000n);
+      expect(result.current.pc).toBe(0x80000004n);
+      expect(result.current.cycles).toBe(42n);
+    });
+
+    it("should append UART output during run", () => {
+      const emulator = createMockEmulator({
+        continue_for_steps: vi.fn(() => 100_000n),
+        take_uart_output: vi.fn(() => new TextEncoder().encode("hello"))
+      });
+
+      const { result } = renderHook(() => useEmulatorStore());
+
+      act(() => {
+        useEmulatorStore.setState({ emulator });
+        result.current.startRun();
+        rafCallback?.(0);
+      });
+
+      expect(result.current.uartText).toBe("hello");
+    });
+
+    it("should stop running when emulator halts", () => {
+      const emulator = createMockEmulator({
+        continue_for_steps: vi.fn(() => 100_000n),
+        is_halted: vi.fn()
+          .mockReturnValueOnce(false)
+          .mockReturnValue(true)
+      });
+
+      const { result } = renderHook(() => useEmulatorStore());
+
+      act(() => {
+        useEmulatorStore.setState({ emulator });
+        result.current.startRun();
+        rafCallback?.(0);
+      });
+
+      expect(result.current.executionState).toBe(EmulatorStatus.Paused);
+      expect(result.current.animationFrameId).toBe(null);
+      expect(result.current.boardHalted).toBe(true);
+    });
+
+    it("should pause and record error when run loop throws", () => {
+      const emulator = createMockEmulator({
+        continue_for_steps: vi.fn(() => {
+          throw new Error("run failed");
+        })
+      });
+
+      const { result } = renderHook(() => useEmulatorStore());
+
+      act(() => {
+        useEmulatorStore.setState({ emulator });
+        result.current.startRun();
+        rafCallback?.(0);
+      });
+
+      expect(result.current.executionState).toBe(EmulatorStatus.Paused);
+      expect(result.current.animationFrameId).toBe(null);
+      expect(result.current.error).toBe("run failed");
+    });
+
+    it("should cancel animation frame and refresh debug state when paused", () => {
+      const cancelSpy = vi.spyOn(window, "cancelAnimationFrame");
+      const emulator = createMockEmulator({
+        read_pc: vi.fn(() => 0x80000008n),
+        clock_cycles: vi.fn(() => 88n)
+      });
+
+      const { result } = renderHook(() => useEmulatorStore());
+
+      act(() => {
+        useEmulatorStore.setState({
+          emulator,
+          executionState: EmulatorStatus.Running,
+          animationFrameId: 456
+        });
+        result.current.pauseRun();
+      });
+
+      expect(cancelSpy).toHaveBeenCalledWith(456);
+      expect(result.current.executionState).toBe(EmulatorStatus.Paused);
+      expect(result.current.animationFrameId).toBe(null);
+      expect(result.current.pc).toBe(0x80000008n);
+      expect(result.current.cycles).toBe(88n);
+      expect(result.current.regs[1]).toBe(10n);
+    });
+  });
+
+  describe("UART Output", () => {
+    it("should append UART output when stepping once", async () => {
+      const emulator = createMockEmulator({
+        take_uart_output: vi.fn(() => new TextEncoder().encode("step output"))
+      });
+
+      const { result } = renderHook(() => useEmulatorStore());
+
+      await act(async () => {
+        useEmulatorStore.setState({ emulator });
+        await result.current.stepOnce();
+      });
+
+      expect(result.current.uartText).toBe("step output");
+    });
+
+    it("should keep UART output within maximum buffer length", async () => {
+      const emulator = createMockEmulator({
+        take_uart_output: vi.fn(() => new TextEncoder().encode("b".repeat(20)))
+      });
+
+      const { result } = renderHook(() => useEmulatorStore());
+
+      await act(async () => {
+        useEmulatorStore.setState({
+          emulator,
+          uartText: "a".repeat(999_990)
+        });
+        await result.current.stepOnce();
+      });
+
+      expect(result.current.uartText).toHaveLength(1_000_000);
+      expect(result.current.uartText.startsWith("a".repeat(999_980))).toBe(true);
+      expect(result.current.uartText.endsWith("b".repeat(20))).toBe(true);
     });
   });
 });

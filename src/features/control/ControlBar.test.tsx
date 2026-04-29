@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { ControlBar } from "./ControlBar";
 import { useEmulatorStore } from "@/features/emulator/useEmulatorStore";
 import { createMockEmulator } from "@/test/mocks";
+import type { WasmEmulator } from "@/features/emulator/wasmTypes";
 
 vi.mock("@/features/emulator/useEmulatorStore", () => ({
   useEmulatorStore: vi.fn(),
@@ -21,7 +22,19 @@ describe("ControlBar - Load State Management", () => {
   const mockStepOnce = vi.fn();
   const mockClearUart = vi.fn();
 
-  const defaultStoreState = {
+  type MockStoreState = {
+    loadProgram: typeof mockLoadProgram;
+    loadProgramFromUrl: typeof mockLoadProgramFromUrl;
+    loading: boolean;
+    executionState: "Paused" | "Running";
+    startRun: typeof mockStartRun;
+    pauseRun: typeof mockPauseRun;
+    stepOnce: typeof mockStepOnce;
+    clearUart: typeof mockClearUart;
+    emulator: WasmEmulator | null;
+  };
+
+  const defaultStoreState: MockStoreState = {
     loadProgram: mockLoadProgram,
     loadProgramFromUrl: mockLoadProgramFromUrl,
     loading: false,
@@ -33,13 +46,23 @@ describe("ControlBar - Load State Management", () => {
     emulator: null
   };
 
+  let storeState: MockStoreState = defaultStoreState;
+
+  function setStoreState(nextState: MockStoreState): void {
+    storeState = nextState;
+    const implementation = (selector?: (state: MockStoreState) => unknown): unknown => {
+      return selector ? selector(storeState) : storeState;
+    };
+    vi.mocked(useEmulatorStore).mockImplementation(implementation as typeof useEmulatorStore);
+  }
+
   beforeEach(() => {
     vi.clearAllMocks();
     
     // Default fetch returns failed manifest
     global.fetch = vi.fn().mockRejectedValue(new Error("Not found"));
     
-    vi.mocked(useEmulatorStore).mockReturnValue(defaultStoreState);
+    setStoreState(defaultStoreState);
   });
 
   describe("File Selection", () => {
@@ -100,7 +123,7 @@ describe("ControlBar - Load State Management", () => {
     });
 
     it("should hide hint message after emulator is loaded", () => {
-      vi.mocked(useEmulatorStore).mockReturnValue({
+      setStoreState({
         ...defaultStoreState,
         emulator: createMockEmulator()
       });
@@ -222,6 +245,45 @@ describe("ControlBar - Load State Management", () => {
       });
     });
 
+    it("should hide built-in section when manifest has no programs array", async () => {
+      vi.mocked(global.fetch).mockResolvedValue({
+        ok: true,
+        json: async () => ({})
+      } as Response);
+
+      render(<ControlBar />);
+
+      await waitFor(() => {
+        expect(screen.queryByText("Built-in Programs:")).not.toBeInTheDocument();
+      });
+    });
+
+    it("should hide built-in section when manifest programs is null", async () => {
+      vi.mocked(global.fetch).mockResolvedValue({
+        ok: true,
+        json: async () => ({ programs: null })
+      } as Response);
+
+      render(<ControlBar />);
+
+      await waitFor(() => {
+        expect(screen.queryByText("Built-in Programs:")).not.toBeInTheDocument();
+      });
+    });
+
+    it("should hide built-in section when manifest programs is not an array", async () => {
+      vi.mocked(global.fetch).mockResolvedValue({
+        ok: true,
+        json: async () => ({ programs: "fib.elf" })
+      } as Response);
+
+      render(<ControlBar />);
+
+      await waitFor(() => {
+        expect(screen.queryByText("Built-in Programs:")).not.toBeInTheDocument();
+      });
+    });
+
     it("should show hint for selected built-in program", async () => {
       render(<ControlBar />);
       const user = userEvent.setup();
@@ -308,7 +370,7 @@ describe("ControlBar - Load State Management", () => {
 
   describe("Loading State", () => {
     it("should disable Load button while loading", () => {
-      vi.mocked(useEmulatorStore).mockReturnValue({
+      setStoreState({
         ...defaultStoreState,
         loading: true
       });
@@ -321,7 +383,7 @@ describe("ControlBar - Load State Management", () => {
     });
 
     it("should disable all inputs while loading", () => {
-      vi.mocked(useEmulatorStore).mockReturnValue({
+      setStoreState({
         ...defaultStoreState,
         loading: true
       });
@@ -333,7 +395,7 @@ describe("ControlBar - Load State Management", () => {
     });
 
     it("should not show hint while loading", async () => {
-      vi.mocked(useEmulatorStore).mockReturnValue({
+      setStoreState({
         ...defaultStoreState,
         loading: true
       });
@@ -380,7 +442,7 @@ describe("ControlBar - Load State Management", () => {
     });
 
     it("should show hint whenever a selection exists and not loading, even if emulator exists", async () => {
-      vi.mocked(useEmulatorStore).mockReturnValue({
+      setStoreState({
         ...defaultStoreState,
         emulator: createMockEmulator()
       });
@@ -409,7 +471,7 @@ describe("ControlBar - Load State Management", () => {
     });
 
     it("should enable action buttons when emulator is loaded", () => {
-      vi.mocked(useEmulatorStore).mockReturnValue({
+      setStoreState({
         ...defaultStoreState,
         emulator: createMockEmulator()
       });
@@ -422,7 +484,7 @@ describe("ControlBar - Load State Management", () => {
     });
 
     it("should disable Run and Step when emulator is running", () => {
-      vi.mocked(useEmulatorStore).mockReturnValue({
+      setStoreState({
         ...defaultStoreState,
         emulator: createMockEmulator(),
         executionState: "Running" as const
