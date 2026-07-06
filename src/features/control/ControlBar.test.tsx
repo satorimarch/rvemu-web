@@ -1,500 +1,249 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
+import type { Mock } from "vitest";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { ControlBar } from "./ControlBar";
-import { useEmulatorStore } from "@/features/emulator/useEmulatorStore";
-import { createMockEmulator } from "@/test/mocks";
-import type { WasmEmulator } from "@/features/emulator/wasmTypes";
+import { useEmulatorStore, type EmulatorState } from "@/features/emulator/useEmulatorStore";
+import { createMockEmulator, type MockEmulator } from "@/test/mocks";
 
-vi.mock("@/features/emulator/useEmulatorStore", () => ({
-  useEmulatorStore: vi.fn(),
-  EmulatorStatus: {
-    Running: "Running",
-    Paused: "Paused"
-  }
-}));
+function resetStoreState(): void {
+  useEmulatorStore.setState({
+    status: "idle",
+    mode: "run",
+    emulator: null,
+    rvdb: null,
+    rvdbHandle: null,
+    error: null,
+    pc: 0n,
+    cycles: 0n,
+    regs: Array.from({ length: 32 }, () => 0n),
+    uartText: "",
+    uartEpoch: 0,
+    rvdbText: "",
+    rvdbEpoch: 0,
+    debugRunning: false,
+    haltPc: null,
+    lastLoadedBytes: null,
+    speed: "normal",
+    animationFrameId: null
+  });
+}
 
-describe("ControlBar - Load State Management", () => {
-  const mockLoadProgram = vi.fn();
-  const mockLoadProgramFromUrl = vi.fn();
-  const mockStartRun = vi.fn();
-  const mockPauseRun = vi.fn();
-  const mockStepOnce = vi.fn();
-  const mockClearUart = vi.fn();
+type MockActions = {
+  loadFile: Mock;
+  loadFromUrl: Mock;
+  run: Mock;
+  pause: Mock;
+  step: Mock;
+  reset: Mock;
+  setSpeed: Mock;
+};
 
-  type MockStoreState = {
-    loadProgram: typeof mockLoadProgram;
-    loadProgramFromUrl: typeof mockLoadProgramFromUrl;
-    loading: boolean;
-    executionState: "Paused" | "Running";
-    startRun: typeof mockStartRun;
-    pauseRun: typeof mockPauseRun;
-    stepOnce: typeof mockStepOnce;
-    clearUart: typeof mockClearUart;
-    emulator: WasmEmulator | null;
-  };
+function setStoreState(partial: Partial<EmulatorState>): void {
+  useEmulatorStore.setState(partial);
+}
 
-  const defaultStoreState: MockStoreState = {
-    loadProgram: mockLoadProgram,
-    loadProgramFromUrl: mockLoadProgramFromUrl,
-    loading: false,
-    executionState: "Paused" as const,
-    startRun: mockStartRun,
-    pauseRun: mockPauseRun,
-    stepOnce: mockStepOnce,
-    clearUart: mockClearUart,
-    emulator: null
-  };
+function mockActions(): MockActions {
+  const loadFile = vi.fn();
+  const loadFromUrl = vi.fn();
+  const run = vi.fn();
+  const pause = vi.fn();
+  const step = vi.fn();
+  const reset = vi.fn();
+  const setSpeed = vi.fn();
+  setStoreState({ loadFile, loadFromUrl, run, pause, step, reset, setSpeed });
+  return { loadFile, loadFromUrl, run, pause, step, reset, setSpeed };
+}
 
-  let storeState: MockStoreState = defaultStoreState;
-
-  function setStoreState(nextState: MockStoreState): void {
-    storeState = nextState;
-    const implementation = (selector?: (state: MockStoreState) => unknown): unknown => {
-      return selector ? selector(storeState) : storeState;
-    };
-    vi.mocked(useEmulatorStore).mockImplementation(implementation as typeof useEmulatorStore);
-  }
-
+describe("ControlBar", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    
-    // Default fetch returns failed manifest
-    global.fetch = vi.fn().mockRejectedValue(new Error("Not found"));
-    
-    setStoreState(defaultStoreState);
+    resetStoreState();
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ programs: [] }), { status: 200 })
+    );
   });
 
-  describe("File Selection", () => {
-    it("should enable Load button when file is selected", async () => {
-      render(<ControlBar />);
-      const user = userEvent.setup();
-
-      const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
-      const loadButton = screen.getByRole("button", { name: /load/i });
-
-      expect(loadButton).toBeDisabled();
-
-      const file = new File(["test"], "test.elf", { type: "application/octet-stream" });
-      await user.upload(fileInput, file);
-
-      expect(loadButton).not.toBeDisabled();
-    });
-
-    it("should auto-detect ELF format from filename", async () => {
-      render(<ControlBar />);
-      const user = userEvent.setup();
-
-      const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
-      const formatSelect = screen.getAllByRole("combobox")[0] as HTMLSelectElement;
-
-      const file = new File(["test"], "program.elf", { type: "application/octet-stream" });
-      await user.upload(fileInput, file);
-
-      expect(formatSelect.value).toBe("elf");
-    });
-
-    it("should auto-detect BIN format from filename", async () => {
-      render(<ControlBar />);
-      const user = userEvent.setup();
-
-      const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
-      const formatSelect = screen.getAllByRole("combobox")[0] as HTMLSelectElement;
-
-      const file = new File(["test"], "program.bin", { type: "application/octet-stream" });
-      await user.upload(fileInput, file);
-
-      expect(formatSelect.value).toBe("bin");
-    });
-
-    it("should show hint message when file is selected but not loaded", async () => {
-      render(<ControlBar />);
-      const user = userEvent.setup();
-
-      const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
-      const file = new File(["test"], "test.elf", { type: "application/octet-stream" });
-      
-      await user.upload(fileInput, file);
-
-      await waitFor(() => {
-        expect(screen.getByText(/Selected: test.elf/i)).toBeInTheDocument();
-        expect(screen.getByText(/Click Load to start/i)).toBeInTheDocument();
-      });
-    });
-
-    it("should hide hint message after emulator is loaded", () => {
-      setStoreState({
-        ...defaultStoreState,
-        emulator: createMockEmulator()
-      });
-
-      render(<ControlBar />);
-
-      expect(screen.queryByText(/Click Load to start/i)).not.toBeInTheDocument();
-    });
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
-  describe("Built-in Programs", () => {
-    beforeEach(() => {
-      vi.mocked(global.fetch).mockImplementation((url) => {
-        if (String(url).endsWith("/test-programs/manifest.json")) {
-          return Promise.resolve({
-            ok: true,
-            json: async () => ({
-              programs: [
-                { id: "fib", file: "fib.elf" },
-                { id: "prime", file: "prime.elf" }
-              ]
-            })
-          } as Response);
-        }
-        return Promise.reject(new Error("Not found"));
-      });
-    });
-
-    it("should load and display built-in programs", async () => {
-      render(<ControlBar />);
-
-      await waitFor(() => {
-        expect(screen.getByText("Built-in Programs:")).toBeInTheDocument();
-      });
-
-      const builtInSelect = screen.getAllByRole("combobox")[1];
-      expect(builtInSelect).toBeInTheDocument();
-    });
-
-    it("should enable Load button when built-in program is selected", async () => {
-      render(<ControlBar />);
-      const user = userEvent.setup();
-
-      await waitFor(() => {
-        expect(screen.getByText("Built-in Programs:")).toBeInTheDocument();
-      });
-
-      const loadButton = screen.getByRole("button", { name: /load/i });
-      expect(loadButton).toBeDisabled();
-
-      const builtInSelect = screen.getAllByRole("combobox")[1];
-      await user.selectOptions(builtInSelect, "fib.elf");
-
-      expect(loadButton).not.toBeDisabled();
-    });
-
-    it("should call loadProgramFromUrl when loading built-in program", async () => {
-      render(<ControlBar />);
-      const user = userEvent.setup();
-
-      await waitFor(() => {
-        expect(screen.getByText("Built-in Programs:")).toBeInTheDocument();
-      });
-
-      const builtInSelect = screen.getAllByRole("combobox")[1];
-      await user.selectOptions(builtInSelect, "fib.elf");
-
-      const loadButton = screen.getByRole("button", { name: /load/i });
-      await user.click(loadButton);
-
-      expect(mockLoadProgramFromUrl).toHaveBeenCalledWith(
-        expect.stringMatching(/\/test-programs\/fib\.elf$/),
-        "elf"
-      );
-      expect(mockLoadProgram).not.toHaveBeenCalled();
-    });
-
-    it("should load built-in BIN program with bin format", async () => {
-      vi.mocked(global.fetch).mockImplementation((url) => {
-        if (String(url).endsWith("/test-programs/manifest.json")) {
-          return Promise.resolve({
-            ok: true,
-            json: async () => ({
-              programs: [
-                { id: "fw_payload", file: "fw_payload.bin", format: "bin" }
-              ]
-            })
-          } as Response);
-        }
-        return Promise.reject(new Error("Not found"));
-      });
-
-      render(<ControlBar />);
-      const user = userEvent.setup();
-
-      await waitFor(() => {
-        expect(screen.getByText("Built-in Programs:")).toBeInTheDocument();
-      });
-
-      const builtInSelect = screen.getAllByRole("combobox")[1];
-      await user.selectOptions(builtInSelect, "fw_payload.bin");
-
-      const loadButton = screen.getByRole("button", { name: /load/i });
-      await user.click(loadButton);
-
-      expect(mockLoadProgramFromUrl).toHaveBeenCalledWith(
-        expect.stringMatching(/\/test-programs\/fw_payload\.bin$/),
-        "bin"
-      );
-    });
-
-    it("should hide built-in section when manifest fails to load", async () => {
-      vi.mocked(global.fetch).mockRejectedValue(new Error("404"));
-
-      render(<ControlBar />);
-
-      await waitFor(() => {
-        expect(screen.queryByText("Built-in Programs:")).not.toBeInTheDocument();
-      });
-    });
-
-    it("should hide built-in section when manifest has no programs array", async () => {
-      vi.mocked(global.fetch).mockResolvedValue({
-        ok: true,
-        json: async () => ({})
-      } as Response);
-
-      render(<ControlBar />);
-
-      await waitFor(() => {
-        expect(screen.queryByText("Built-in Programs:")).not.toBeInTheDocument();
-      });
-    });
-
-    it("should hide built-in section when manifest programs is null", async () => {
-      vi.mocked(global.fetch).mockResolvedValue({
-        ok: true,
-        json: async () => ({ programs: null })
-      } as Response);
-
-      render(<ControlBar />);
-
-      await waitFor(() => {
-        expect(screen.queryByText("Built-in Programs:")).not.toBeInTheDocument();
-      });
-    });
-
-    it("should hide built-in section when manifest programs is not an array", async () => {
-      vi.mocked(global.fetch).mockResolvedValue({
-        ok: true,
-        json: async () => ({ programs: "fib.elf" })
-      } as Response);
-
-      render(<ControlBar />);
-
-      await waitFor(() => {
-        expect(screen.queryByText("Built-in Programs:")).not.toBeInTheDocument();
-      });
-    });
-
-    it("should show hint for selected built-in program", async () => {
-      render(<ControlBar />);
-      const user = userEvent.setup();
-
-      await waitFor(() => {
-        expect(screen.getByText("Built-in Programs:")).toBeInTheDocument();
-      });
-
-      const builtInSelect = screen.getAllByRole("combobox")[1];
-      await user.selectOptions(builtInSelect, "fib.elf");
-
-      await waitFor(() => {
-        expect(screen.getByText(/Selected: fib/i)).toBeInTheDocument();
-      });
-    });
+  it("renders Load controls", () => {
+    mockActions();
+    const { container } = render(<ControlBar />);
+    expect(screen.getByText("Load")).toBeInTheDocument();
+    // Format select is hidden until a program is staged (progressive disclosure).
+    expect(screen.queryByText("ELF")).not.toBeInTheDocument();
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File([new Uint8Array([1])], "prog.elf");
+    fireEvent.change(input, { target: { files: [file] } });
+    expect(screen.getByText("ELF")).toBeInTheDocument();
   });
 
-  describe("Mutual Exclusion", () => {
-    beforeEach(() => {
-      vi.mocked(global.fetch).mockImplementation((url) => {
-        if (String(url).endsWith("/test-programs/manifest.json")) {
-          return Promise.resolve({
-            ok: true,
-            json: async () => ({
-              programs: [{ id: "fib", file: "fib.elf" }]
-            })
-          } as Response);
-        }
-        return Promise.reject(new Error("Not found"));
-      });
-    });
-
-    it("should clear built-in selection when file is selected", async () => {
-      render(<ControlBar />);
-      const user = userEvent.setup();
-
-      await waitFor(() => {
-        expect(screen.getByText("Built-in Programs:")).toBeInTheDocument();
-      });
-
-      // Select built-in first
-      const builtInSelect = screen.getAllByRole("combobox")[1] as HTMLSelectElement;
-      await user.selectOptions(builtInSelect, "fib.elf");
-      expect(builtInSelect.value).toBe("fib.elf");
-
-      // Then select file
-      const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
-      const file = new File(["test"], "test.elf", { type: "application/octet-stream" });
-      await user.upload(fileInput, file);
-
-      // Built-in should be cleared
-      expect(builtInSelect.value).toBe("");
-    });
-
-    it("should clear file selection when built-in is selected", async () => {
-      render(<ControlBar />);
-      const user = userEvent.setup();
-
-      await waitFor(() => {
-        expect(screen.getByText("Built-in Programs:")).toBeInTheDocument();
-      });
-
-      // Select file first
-      const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
-      const file = new File(["test"], "test.elf", { type: "application/octet-stream" });
-      await user.upload(fileInput, file);
-
-      // Verify file is selected
-      await waitFor(() => {
-        expect(screen.getByText(/Selected: test.elf/i)).toBeInTheDocument();
-      });
-
-      // Then select built-in
-      const builtInSelect = screen.getAllByRole("combobox")[1];
-      await user.selectOptions(builtInSelect, "fib.elf");
-
-      // File selection should be cleared (hint should change)
-      await waitFor(() => {
-        expect(screen.getByText(/Selected: fib/i)).toBeInTheDocument();
-        expect(screen.queryByText(/Selected: test.elf/i)).not.toBeInTheDocument();
-      });
-    });
+  it("disables Load when nothing selected", () => {
+    mockActions();
+    render(<ControlBar />);
+    expect(screen.getByText("Load")).toBeDisabled();
   });
 
-  describe("Loading State", () => {
-    it("should disable Load button while loading", () => {
-      setStoreState({
-        ...defaultStoreState,
-        loading: true
-      });
-
-      render(<ControlBar />);
-
-      const loadButton = screen.getByRole("button", { name: /loading/i });
-      expect(loadButton).toBeDisabled();
-      expect(loadButton).toHaveTextContent("Loading...");
-    });
-
-    it("should disable all inputs while loading", () => {
-      setStoreState({
-        ...defaultStoreState,
-        loading: true
-      });
-
-      render(<ControlBar />);
-
-      const formatSelect = screen.getAllByRole("combobox")[0];
-      expect(formatSelect).toBeEnabled(); // Format select is not disabled during loading
-    });
-
-    it("should not show hint while loading", async () => {
-      setStoreState({
-        ...defaultStoreState,
-        loading: true
-      });
-
-      render(<ControlBar />);
-
-      expect(screen.queryByText(/Click Load to start/i)).not.toBeInTheDocument();
-    });
+  it("enables Load after picking a file", () => {
+    mockActions();
+    const { container } = render(<ControlBar />);
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File([new Uint8Array([1])], "prog.elf");
+    fireEvent.change(input, { target: { files: [file] } });
+    expect(screen.getByText("Load")).toBeEnabled();
   });
 
-  describe("Load UX Regression", () => {
-    it("should call load only once when double-clicking Load rapidly", async () => {
-      render(<ControlBar />);
-      const user = userEvent.setup();
-
-      const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
-      const file = new File(["test"], "double.elf", { type: "application/octet-stream" });
-      await user.upload(fileInput, file);
-
-      const loadButton = screen.getByRole("button", { name: /load/i });
-      await user.dblClick(loadButton);
-
-      expect(mockLoadProgram).toHaveBeenCalledTimes(1);
-    });
-
-    it("should clear visible file selection after clicking Load", async () => {
-      render(<ControlBar />);
-      const user = userEvent.setup();
-
-      const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
-      const file = new File(["test"], "clear-me.elf", { type: "application/octet-stream" });
-      await user.upload(fileInput, file);
-
-      await waitFor(() => {
-        expect(screen.getByText(/Selected: clear-me.elf/i)).toBeInTheDocument();
-      });
-
-      const loadButton = screen.getByRole("button", { name: /load/i });
-      await user.click(loadButton);
-
-      await waitFor(() => {
-        expect(screen.queryByText(/Selected: clear-me.elf/i)).not.toBeInTheDocument();
-      });
-    });
-
-    it("should show hint whenever a selection exists and not loading, even if emulator exists", async () => {
-      setStoreState({
-        ...defaultStoreState,
-        emulator: createMockEmulator()
-      });
-
-      render(<ControlBar />);
-      const user = userEvent.setup();
-
-      const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
-      const file = new File(["test"], "hint.elf", { type: "application/octet-stream" });
-      await user.upload(fileInput, file);
-
-      await waitFor(() => {
-        expect(screen.getByText(/Selected: hint.elf/i)).toBeInTheDocument();
-        expect(screen.getByText(/Click Load to start/i)).toBeInTheDocument();
-      });
-    });
+  it("Run/Pause/Step/Reset are disabled when status is idle", () => {
+    mockActions();
+    render(<ControlBar />);
+    expect(screen.getByText("Run")).toBeDisabled();
+    expect(screen.getByText("Pause")).toBeDisabled();
+    expect(screen.getByText("Step")).toBeDisabled();
+    expect(screen.getByText("Reset")).toBeDisabled();
   });
 
-  describe("Action Buttons State", () => {
-    it("should disable action buttons when no emulator loaded", () => {
-      render(<ControlBar />);
+  it("Run enabled, Pause disabled when ready", () => {
+    const actions = mockActions();
+    const emu: MockEmulator = createMockEmulator();
+    setStoreState({ status: "ready", emulator: emu });
+    render(<ControlBar />);
 
-      expect(screen.getByRole("button", { name: /^run$/i })).toBeDisabled();
-      expect(screen.getByRole("button", { name: /^step$/i })).toBeDisabled();
-      expect(screen.getByRole("button", { name: /clear uart/i })).toBeDisabled();
+    expect(screen.getByText("Run")).toBeEnabled();
+    expect(screen.getByText("Pause")).toBeDisabled();
+    expect(screen.getByText("Step")).toBeEnabled();
+    expect(screen.getByText("Reset")).toBeEnabled();
+
+    fireEvent.click(screen.getByText("Run"));
+    expect(actions.run).toHaveBeenCalledOnce();
+  });
+
+  it("Pause enabled, Run disabled when running", () => {
+    const actions = mockActions();
+    const emu: MockEmulator = createMockEmulator();
+    setStoreState({ status: "running", emulator: emu, animationFrameId: 1 });
+    render(<ControlBar />);
+
+    expect(screen.getByText("Run")).toBeDisabled();
+    expect(screen.getByText("Pause")).toBeEnabled();
+    expect(screen.getByText("Step")).toBeDisabled();
+
+    fireEvent.click(screen.getByText("Pause"));
+    expect(actions.pause).toHaveBeenCalledOnce();
+  });
+
+  it("keeps run-mode Pause disabled during rvdb continue", () => {
+    mockActions();
+    setStoreState({
+      status: "running",
+      mode: "debug",
+      debugRunning: true,
+      emulator: null
     });
+    render(<ControlBar />);
 
-    it("should enable action buttons when emulator is loaded", () => {
-      setStoreState({
-        ...defaultStoreState,
-        emulator: createMockEmulator()
-      });
+    expect(screen.getByText("Pause")).toBeDisabled();
+    expect(screen.getByRole("button", { name: /exit debug mode/i })).toHaveTextContent(
+      "Exit Debug"
+    );
+    expect(screen.getByRole("button", { name: /exit debug mode/i })).toBeDisabled();
+    expect(screen.getByText(/RVDB command running/i)).toBeInTheDocument();
+  });
 
-      render(<ControlBar />);
+  it("uses explicit Debug mode labels and exposes execution shortcuts", () => {
+    mockActions();
+    const emu: MockEmulator = createMockEmulator();
+    setStoreState({ status: "ready", emulator: emu });
+    render(<ControlBar />);
 
-      expect(screen.getByRole("button", { name: /^run$/i })).not.toBeDisabled();
-      expect(screen.getByRole("button", { name: /^step$/i })).not.toBeDisabled();
-      expect(screen.getByRole("button", { name: /clear uart/i })).not.toBeDisabled();
-    });
+    expect(screen.getByRole("button", { name: /enter debug mode/i })).toHaveTextContent(
+      "Enter Debug"
+    );
+    expect(screen.getByRole("button", { name: "Run" })).toHaveAttribute(
+      "aria-keyshortcuts",
+      "Space"
+    );
+    expect(screen.getByRole("button", { name: "Step" })).toHaveAttribute(
+      "aria-keyshortcuts",
+      "S"
+    );
+    expect(screen.getByRole("button", { name: "Reset" })).toHaveAttribute(
+      "aria-keyshortcuts",
+      "R"
+    );
+  });
 
-    it("should disable Run and Step when emulator is running", () => {
-      setStoreState({
-        ...defaultStoreState,
-        emulator: createMockEmulator(),
-        executionState: "Running" as const
-      });
+  it("Step and Run disabled when halted", () => {
+    mockActions();
+    const emu: MockEmulator = createMockEmulator();
+    setStoreState({ status: "halted", emulator: emu });
+    render(<ControlBar />);
 
-      render(<ControlBar />);
+    expect(screen.getByText("Run")).toBeDisabled();
+    expect(screen.getByText("Step")).toBeDisabled();
+    expect(screen.getByText("Reset")).toBeEnabled();
+  });
 
-      expect(screen.getByRole("button", { name: /^run$/i })).toBeDisabled();
-      expect(screen.getByRole("button", { name: /^step$/i })).toBeDisabled();
-      expect(screen.getByRole("button", { name: /^pause$/i })).not.toBeDisabled();
-    });
+  it("Reset calls store.reset", () => {
+    const actions = mockActions();
+    const emu: MockEmulator = createMockEmulator();
+    setStoreState({ status: "ready", emulator: emu });
+    render(<ControlBar />);
+
+    fireEvent.click(screen.getByText("Reset"));
+    expect(actions.reset).toHaveBeenCalledOnce();
+  });
+
+  it("Speed select calls setSpeed", () => {
+    const actions = mockActions();
+    render(<ControlBar />);
+    const speedSelect = screen.getByLabelText("Speed") as HTMLSelectElement;
+    fireEvent.change(speedSelect, { target: { value: "turbo" } });
+    expect(actions.setSpeed).toHaveBeenCalledWith("turbo");
+  });
+
+  it("shows error box when status is error", () => {
+    mockActions();
+    setStoreState({ status: "error", error: "kaboom" });
+    render(<ControlBar />);
+    expect(screen.getByText("kaboom")).toBeInTheDocument();
+  });
+
+  it("renders built-in programs when manifest returns entries", async () => {
+    mockActions();
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({ programs: [{ id: "fib", file: "fib.elf", format: "elf" }] }),
+        { status: 200 }
+      )
+    );
+    render(<ControlBar />);
+    await waitFor(() => expect(screen.getByText("fib")).toBeInTheDocument());
+  });
+
+  it("shows pending hint when a file is selected but not loaded", () => {
+    mockActions();
+    setStoreState({ status: "idle", emulator: null });
+    const { container } = render(<ControlBar />);
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File([new Uint8Array([1])], "prog.elf");
+    fireEvent.change(input, { target: { files: [file] } });
+    expect(screen.getByText(/Selected:.*prog\.elf/i)).toBeInTheDocument();
+  });
+
+  it("disables Run/Step/Reset while a selection is pending even if a program is loaded", () => {
+    mockActions();
+    const emu: MockEmulator = createMockEmulator();
+    setStoreState({ status: "ready", emulator: emu });
+    const { container } = render(<ControlBar />);
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File([new Uint8Array([1])], "next.elf");
+    fireEvent.change(input, { target: { files: [file] } });
+
+    expect(screen.getByText("Run")).toBeDisabled();
+    expect(screen.getByText("Step")).toBeDisabled();
+    expect(screen.getByText("Reset")).toBeDisabled();
+    // Load remains available
+    expect(screen.getByText("Load")).toBeEnabled();
   });
 });

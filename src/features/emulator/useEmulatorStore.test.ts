@@ -1,629 +1,450 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { EmulatorStatus, useEmulatorStore } from "./useEmulatorStore";
-import { createMockEmulator, createMockWasmModule } from "@/test/mocks";
+import { useEmulatorStore } from "./useEmulatorStore";
+import { createMockEmulator, createMockWasmModule, createMockRvdb, createMockRvdbHandle, type MockEmulator, type MockWasmModule } from "@/test/mocks";
 import * as wasmLoader from "./wasmLoader";
+import type { WasmModule } from "./wasmTypes";
 
-// Mock the WASM loader module
 vi.mock("./wasmLoader", () => ({
   loadWasmModule: vi.fn()
 }));
 
-describe("useEmulatorStore - Load Functionality", () => {
-  const mockEmulator = createMockEmulator();
-  const mockWasm = createMockWasmModule(mockEmulator);
+function resetStoreState(): void {
+  useEmulatorStore.setState({
+    status: "idle",
+    mode: "run",
+    emulator: null,
+    rvdb: null,
+    rvdbHandle: null,
+    error: null,
+    pc: 0n,
+    cycles: 0n,
+    regs: Array.from({ length: 32 }, () => 0n),
+    uartText: "",
+    uartEpoch: 0,
+    rvdbText: "",
+    rvdbEpoch: 0,
+    debugRunning: false,
+    haltPc: null,
+    lastLoadedBytes: null,
+    speed: "normal",
+    animationFrameId: null
+  });
+}
+
+describe("useEmulatorStore", () => {
+  let mockEmulator: MockEmulator;
+  let mockWasm: MockWasmModule;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(wasmLoader.loadWasmModule).mockResolvedValue(mockWasm as any);
-    
-    // Reset store state
-    const { result } = renderHook(() => useEmulatorStore());
-    act(() => {
-      useEmulatorStore.setState({
-        emulator: null,
-        loading: false,
-        executionState: EmulatorStatus.Paused,
-        boardHalted: false,
-        error: null,
-        cycles: 0n,
-        pc: 0n,
-        regs: Array(32).fill(0n),
-        uartText: "",
-        animationFrameId: null
-      });
-    });
+    mockEmulator = createMockEmulator();
+    mockWasm = createMockWasmModule(mockEmulator);
+    vi.mocked(wasmLoader.loadWasmModule).mockResolvedValue(mockWasm as unknown as WasmModule);
+    resetStoreState();
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  describe("loadProgram (from File)", () => {
-    it("should set loading state to true when starting load", async () => {
+  describe("loadFile", () => {
+    it("transitions loading → ready on success", async () => {
+      const file = new File([new Uint8Array([1, 2, 3])], "prog.elf");
       const { result } = renderHook(() => useEmulatorStore());
-      const file = new File(["test"], "test.elf", { type: "application/octet-stream" });
-
-      act(() => {
-        void result.current.loadProgram(file, "elf");
-      });
-
-      // Check immediate state
-      expect(result.current.loading).toBe(true);
-      expect(result.current.emulator).toBe(null);
-      expect(result.current.error).toBe(null);
-
-      await waitFor(() => {
-        expect(result.current.loading).toBe(false);
-      });
-    });
-
-    it("should successfully load an ELF file", async () => {
-      const { result } = renderHook(() => useEmulatorStore());
-      const fileContent = new Uint8Array([0x7f, 0x45, 0x4c, 0x46]); // ELF magic bytes
-      const file = new File([fileContent], "test.elf", { type: "application/octet-stream" });
 
       await act(async () => {
-        await result.current.loadProgram(file, "elf");
+        await result.current.loadFile(file, "elf");
       });
 
-      await waitFor(() => {
-        expect(result.current.loading).toBe(false);
-        expect(result.current.emulator).toBe(mockEmulator);
-        expect(result.current.error).toBe(null);
-        expect(mockWasm.WasmEmulator.from_elf_bytes).toHaveBeenCalled();
-      });
+      expect(result.current.status).toBe("ready");
+      expect(result.current.emulator).toBe(mockEmulator);
+      expect(mockWasm.WasmEmulator.from_elf_bytes).toHaveBeenCalledOnce();
+      expect(result.current.error).toBeNull();
     });
 
-    it("should successfully load a BIN file", async () => {
+    it("uses from_bin_bytes for bin format", async () => {
+      const file = new File([new Uint8Array([1])], "prog.bin");
       const { result } = renderHook(() => useEmulatorStore());
-      const fileContent = new Uint8Array([0x00, 0x01, 0x02, 0x03]);
-      const file = new File([fileContent], "test.bin", { type: "application/octet-stream" });
 
       await act(async () => {
-        await result.current.loadProgram(file, "bin");
+        await result.current.loadFile(file, "bin");
       });
 
-      await waitFor(() => {
-        expect(result.current.loading).toBe(false);
-        expect(result.current.emulator).toBe(mockEmulator);
-        expect(result.current.error).toBe(null);
-        expect(mockWasm.WasmEmulator.from_bin_bytes).toHaveBeenCalled();
-      });
+      expect(mockWasm.WasmEmulator.from_bin_bytes).toHaveBeenCalledOnce();
+      expect(result.current.status).toBe("ready");
     });
 
-    it("should clear previous state when loading new program", async () => {
+    it("reads pc/cycles/regs after load", async () => {
+      const file = new File([new Uint8Array([1])], "prog.elf");
       const { result } = renderHook(() => useEmulatorStore());
-      
-      // Set some existing state
-      act(() => {
-        useEmulatorStore.setState({
-          uartText: "previous output",
-          pc: 0x12345678n,
-          cycles: 1000n,
-          error: "previous error"
-        });
-      });
-
-      const file = new File(["test"], "test.elf", { type: "application/octet-stream" });
 
       await act(async () => {
-        await result.current.loadProgram(file, "elf");
+        await result.current.loadFile(file, "elf");
       });
 
-      await waitFor(() => {
-        expect(result.current.loading).toBe(false);
-        expect(result.current.uartText).toBe("");
-        expect(result.current.pc).not.toBe(0x12345678n);
-        expect(result.current.cycles).not.toBe(1000n);
-        expect(result.current.error).toBe(null);
-      });
+      expect(result.current.pc).toBe(0x80000000n);
+      expect(result.current.cycles).toBe(100n);
+      expect(result.current.regs).toHaveLength(32);
+      expect(result.current.regs[5]).toBe(50n);
     });
 
-    it("should cancel animation frame before loading", async () => {
+    it("reduces to error on failure and clears emulator", async () => {
+      vi.mocked(wasmLoader.loadWasmModule).mockRejectedValue(new Error("boom"));
+      const file = new File([new Uint8Array([1])], "prog.elf");
       const { result } = renderHook(() => useEmulatorStore());
-      const cancelSpy = vi.spyOn(window, "cancelAnimationFrame");
-      
-      // Set an active animation frame
-      act(() => {
-        useEmulatorStore.setState({ animationFrameId: 123 });
-      });
-
-      const file = new File(["test"], "test.elf", { type: "application/octet-stream" });
 
       await act(async () => {
-        await result.current.loadProgram(file, "elf");
+        await result.current.loadFile(file, "elf");
       });
 
-      expect(cancelSpy).toHaveBeenCalledWith(123);
-      
-      await waitFor(() => {
-        expect(result.current.animationFrameId).toBe(null);
-      });
+      expect(result.current.status).toBe("error");
+      expect(result.current.emulator).toBeNull();
+      expect(result.current.error).toBe("boom");
     });
 
-    it("should handle load errors gracefully", async () => {
+    it("surfaces errors returned by the WASM board constructor", async () => {
+      mockWasm.WasmEmulator.from_bin_bytes.mockImplementation(() => {
+        throw "binary load failed: image does not fit in RAM";
+      });
+      const file = new File([new Uint8Array([1])], "prog.bin");
       const { result } = renderHook(() => useEmulatorStore());
-      const errorMessage = "Failed to parse ELF";
-      
-      vi.mocked(wasmLoader.loadWasmModule).mockResolvedValue({
-        WasmEmulator: {
-          from_elf_bytes: vi.fn(() => {
-            throw new Error(errorMessage);
-          }),
-          from_bin_bytes: vi.fn()
-        }
-      } as any);
-
-      const file = new File(["invalid"], "test.elf", { type: "application/octet-stream" });
 
       await act(async () => {
-        await result.current.loadProgram(file, "elf");
+        await result.current.loadFile(file, "bin");
       });
 
-      await waitFor(() => {
-        expect(result.current.loading).toBe(false);
-        expect(result.current.emulator).toBe(null);
-        expect(result.current.error).toBe(errorMessage);
-      });
+      expect(result.current.status).toBe("error");
+      expect(result.current.emulator).toBeNull();
+      expect(result.current.error).toBe("binary load failed: image does not fit in RAM");
     });
 
-    it("should not have emulator running after failed load", async () => {
+    it("disposes previous emulator on reload", async () => {
+      const file1 = new File([new Uint8Array([1])], "a.elf");
+      const file2 = new File([new Uint8Array([2])], "b.elf");
       const { result } = renderHook(() => useEmulatorStore());
-      
-      vi.mocked(wasmLoader.loadWasmModule).mockResolvedValue({
-        WasmEmulator: {
-          from_elf_bytes: vi.fn(() => {
-            throw new Error("Load failed");
-          }),
-          from_bin_bytes: vi.fn()
-        }
-      } as any);
-
-      const file = new File(["invalid"], "test.elf", { type: "application/octet-stream" });
 
       await act(async () => {
-        await result.current.loadProgram(file, "elf");
+        await result.current.loadFile(file1, "elf");
+      });
+      const firstEmu = result.current.emulator;
+      expect(firstEmu).not.toBeNull();
+
+      const secondEmu = createMockEmulator({ read_pc: vi.fn((): bigint => 0x1000n) });
+      const secondWasm = createMockWasmModule(secondEmu);
+      vi.mocked(wasmLoader.loadWasmModule).mockResolvedValue(secondWasm as unknown as WasmModule);
+
+      await act(async () => {
+        await result.current.loadFile(file2, "elf");
       });
 
-      await waitFor(() => {
-        expect(result.current.loading).toBe(false);
-        expect(result.current.emulator).toBe(null);
-        expect(result.current.executionState).toBe("Paused");
-      });
+      expect((firstEmu as unknown as MockEmulator).free).toHaveBeenCalledOnce();
+      expect(result.current.emulator).toBe(secondEmu);
     });
   });
 
-  describe("loadProgramFromUrl (Built-in Programs)", () => {
-    beforeEach(() => {
-      global.fetch = vi.fn();
-    });
-
-    it("should successfully load program from URL", async () => {
+  describe("loadFromUrl", () => {
+    it("fetches bytes then loads", async () => {
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        new Response(new Uint8Array([9, 9]), { status: 200 })
+      );
       const { result } = renderHook(() => useEmulatorStore());
-      const mockData = new Uint8Array([0x7f, 0x45, 0x4c, 0x46]);
-      
-      vi.mocked(global.fetch).mockResolvedValue({
-        ok: true,
-        arrayBuffer: async () => mockData.buffer
-      } as Response);
 
       await act(async () => {
-        await result.current.loadProgramFromUrl("/test-programs/fib.elf", "elf");
+        await result.current.loadFromUrl("http://x/prog.elf", "elf");
       });
 
-      await waitFor(() => {
-        expect(result.current.loading).toBe(false);
-        expect(result.current.emulator).toBe(mockEmulator);
-        expect(result.current.error).toBe(null);
-        expect(global.fetch).toHaveBeenCalledWith("/test-programs/fib.elf");
-      });
+      expect(fetchSpy).toHaveBeenCalledOnce();
+      expect(result.current.status).toBe("ready");
+      fetchSpy.mockRestore();
     });
 
-    it("should handle network errors", async () => {
+    it("errors on non-ok response", async () => {
+      vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        new Response(null, { status: 404, statusText: "Not Found" })
+      );
       const { result } = renderHook(() => useEmulatorStore());
-      
-      vi.mocked(global.fetch).mockResolvedValue({
-        ok: false,
-        status: 404,
-        statusText: "Not Found"
-      } as Response);
 
       await act(async () => {
-        await result.current.loadProgramFromUrl("/test-programs/missing.elf", "elf");
+        await result.current.loadFromUrl("http://x/missing.elf", "elf");
       });
 
-      await waitFor(() => {
-        expect(result.current.loading).toBe(false);
-        expect(result.current.emulator).toBe(null);
-        expect(result.current.error).toContain("404");
-        expect(result.current.error).toContain("Not Found");
-      });
-    });
-
-    it("should cancel animation frame before loading from URL", async () => {
-      const { result } = renderHook(() => useEmulatorStore());
-      const cancelSpy = vi.spyOn(window, "cancelAnimationFrame");
-      
-      act(() => {
-        useEmulatorStore.setState({ animationFrameId: 456 });
-      });
-
-      const mockData = new Uint8Array([0x7f, 0x45, 0x4c, 0x46]);
-      vi.mocked(global.fetch).mockResolvedValue({
-        ok: true,
-        arrayBuffer: async () => mockData.buffer
-      } as Response);
-
-      await act(async () => {
-        await result.current.loadProgramFromUrl("/test-programs/test.elf", "elf");
-      });
-
-      expect(cancelSpy).toHaveBeenCalledWith(456);
-      
-      await waitFor(() => {
-        expect(result.current.animationFrameId).toBe(null);
-      });
-    });
-
-    it("should clear previous state when loading from URL", async () => {
-      const { result } = renderHook(() => useEmulatorStore());
-      
-      act(() => {
-        useEmulatorStore.setState({
-          uartText: "old data",
-          pc: 0xffffffffn,
-          cycles: 99999n
-        });
-      });
-
-      const mockData = new Uint8Array([0x7f, 0x45, 0x4c, 0x46]);
-      vi.mocked(global.fetch).mockResolvedValue({
-        ok: true,
-        arrayBuffer: async () => mockData.buffer
-      } as Response);
-
-      await act(async () => {
-        await result.current.loadProgramFromUrl("/test-programs/test.elf", "elf");
-      });
-
-      await waitFor(() => {
-        expect(result.current.uartText).toBe("");
-        expect(result.current.pc).not.toBe(0xffffffffn);
-        expect(result.current.cycles).not.toBe(99999n);
-      });
+      expect(result.current.status).toBe("error");
+      expect(result.current.error).toContain("404");
     });
   });
 
-  describe("Load State Consistency", () => {
-    it("should process only first loadProgram when clicked rapidly", async () => {
+  describe("step", () => {
+    it("advances and appends UART output", async () => {
+      mockEmulator.take_uart_output.mockReturnValueOnce(new Uint8Array([72, 105])); // "Hi"
+      const file = new File([new Uint8Array([1])], "p.elf");
       const { result } = renderHook(() => useEmulatorStore());
-      const file1 = new File(["test1"], "test1.elf", { type: "application/octet-stream" });
-      const file2 = new File(["test2"], "test2.elf", { type: "application/octet-stream" });
-
-      const resolveRef: { current: (value: any) => void } = { current: () => undefined };
-      const pendingWasm = new Promise<any>((resolve) => {
-        resolveRef.current = resolve;
-      });
-
-      vi.mocked(wasmLoader.loadWasmModule).mockReturnValueOnce(pendingWasm as Promise<any>);
-
-      act(() => {
-        void result.current.loadProgram(file1, "elf");
-        void result.current.loadProgram(file2, "elf");
-      });
-
-      await waitFor(() => {
-        expect(wasmLoader.loadWasmModule).toHaveBeenCalledTimes(1);
-      });
-
-      resolveRef.current(mockWasm);
-
-      await waitFor(() => {
-        expect(result.current.loading).toBe(false);
-      });
-    });
-
-    it("should ignore loadProgram calls while already loading", async () => {
-      const { result } = renderHook(() => useEmulatorStore());
-      const file = new File(["test1"], "test1.elf", { type: "application/octet-stream" });
-
-      act(() => {
-        useEmulatorStore.setState({ loading: true });
-      });
-
-      act(() => {
-        void result.current.loadProgram(file, "elf");
-      });
-
-      expect(result.current.loading).toBe(true);
-      expect(wasmLoader.loadWasmModule).not.toHaveBeenCalled();
-    });
-
-    it("should ignore loadProgramFromUrl calls while already loading", async () => {
-      const { result } = renderHook(() => useEmulatorStore());
-
-      global.fetch = vi.fn();
-
-      act(() => {
-        useEmulatorStore.setState({ loading: true });
-      });
-
-      act(() => {
-        void result.current.loadProgramFromUrl("/test-programs/fib.elf", "elf");
-      });
-
-      expect(result.current.loading).toBe(true);
-      expect(global.fetch).not.toHaveBeenCalled();
-      expect(wasmLoader.loadWasmModule).not.toHaveBeenCalled();
-    });
-
-    it("should preserve emulator instance after successful load", async () => {
-      const { result } = renderHook(() => useEmulatorStore());
-      const file = new File(["test"], "test.elf", { type: "application/octet-stream" });
 
       await act(async () => {
-        await result.current.loadProgram(file, "elf");
+        await result.current.loadFile(file, "elf");
       });
-
-      await waitFor(() => {
-        expect(result.current.emulator).not.toBe(null);
-      });
-
-      const firstEmulator = result.current.emulator;
-
-      // Wait and check it's still the same
-      await new Promise(resolve => setTimeout(resolve, 50));
-      
-      expect(result.current.emulator).toBe(firstEmulator);
-    });
-
-    it("should reset all state flags correctly on load start", async () => {
-      const { result } = renderHook(() => useEmulatorStore());
-      
-      // Set various states
-      act(() => {
-        useEmulatorStore.setState({
-          emulator: mockEmulator,
-          loading: false,
-          boardHalted: true,
-          error: "some error",
-          executionState: "Running" as any
-        });
-      });
-
-      const file = new File(["test"], "test.elf", { type: "application/octet-stream" });
-
-      act(() => {
-        void result.current.loadProgram(file, "elf");
-      });
-
-      // Immediately check state was reset
-      expect(result.current.loading).toBe(true);
-      expect(result.current.emulator).toBe(null);
-      expect(result.current.error).toBe(null);
-      expect(result.current.boardHalted).toBe(false);
-      expect(result.current.executionState).toBe("Paused");
-      expect(result.current.animationFrameId).toBe(null);
-
-      await waitFor(() => {
-        expect(result.current.loading).toBe(false);
-      });
-    });
-
-    it("should dispose previous emulator after successful replacement", async () => {
-      const previousEmulator = createMockEmulator();
-      const nextEmulator = createMockEmulator();
-
-      vi.mocked(wasmLoader.loadWasmModule).mockResolvedValue({
-        WasmEmulator: {
-          from_elf_bytes: vi.fn(() => nextEmulator),
-          from_bin_bytes: vi.fn(() => nextEmulator)
-        }
-      } as any);
-
-      const { result } = renderHook(() => useEmulatorStore());
-
-      act(() => {
-        useEmulatorStore.setState({ emulator: previousEmulator });
-      });
-
-      const file = new File(["test"], "replace.elf", { type: "application/octet-stream" });
       await act(async () => {
-        await result.current.loadProgram(file, "elf");
+        result.current.step();
       });
 
-      expect((previousEmulator as unknown as { free: () => void }).free).toHaveBeenCalledTimes(1);
-      expect(result.current.emulator).toBe(nextEmulator);
+      expect(mockEmulator.step).toHaveBeenCalledOnce();
+      expect(result.current.uartText).toBe("Hi");
     });
 
-    it("should keep previous emulator when new load fails", async () => {
-      const previousEmulator = createMockEmulator();
-
-      vi.mocked(wasmLoader.loadWasmModule).mockResolvedValue({
-        WasmEmulator: {
-          from_elf_bytes: vi.fn(() => {
-            throw new Error("unreachable executed");
-          }),
-          from_bin_bytes: vi.fn()
-        }
-      } as any);
-
+    it("transitions to halted when is_halted returns true", async () => {
+      mockEmulator.is_halted.mockReturnValue(true);
+      const file = new File([new Uint8Array([1])], "p.elf");
       const { result } = renderHook(() => useEmulatorStore());
 
-      act(() => {
-        useEmulatorStore.setState({ emulator: previousEmulator });
-      });
-
-      const file = new File(["bad"], "broken.elf", { type: "application/octet-stream" });
       await act(async () => {
-        await result.current.loadProgram(file, "elf");
+        await result.current.loadFile(file, "elf");
       });
 
-      expect(result.current.emulator).toBe(previousEmulator);
-      expect(result.current.error).toContain("unreachable executed");
-      expect((previousEmulator as unknown as { free: () => void }).free).not.toHaveBeenCalled();
+      expect(result.current.status).toBe("halted");
     });
   });
 
-  describe("Run Loop", () => {
-    let rafCallback: FrameRequestCallback | null;
-
-    beforeEach(() => {
-      rafCallback = null;
-      vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
-        rafCallback = callback;
-        return 123;
-      });
-      vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => undefined);
-    });
-
-    it("should start running and execute one animation frame", () => {
-      const emulator = createMockEmulator({
-        continue_for_steps: vi.fn(() => 100_000n),
-        read_pc: vi.fn(() => 0x80000004n),
-        clock_cycles: vi.fn(() => 42n)
-      });
-
+  describe("run / pause", () => {
+    it("sets running status on run", async () => {
+      const file = new File([new Uint8Array([1])], "p.elf");
       const { result } = renderHook(() => useEmulatorStore());
 
-      act(() => {
-        useEmulatorStore.setState({ emulator });
-        result.current.startRun();
+      await act(async () => {
+        await result.current.loadFile(file, "elf");
       });
+      act(() => result.current.run());
 
-      expect(result.current.executionState).toBe(EmulatorStatus.Running);
-      expect(result.current.animationFrameId).toBe(123);
-      expect(rafCallback).not.toBe(null);
-
-      act(() => {
-        rafCallback?.(0);
-      });
-
-      expect(emulator.continue_for_steps).toHaveBeenCalledWith(100_000n);
-      expect(result.current.pc).toBe(0x80000004n);
-      expect(result.current.cycles).toBe(42n);
+      expect(result.current.status).toBe("running");
+      expect(result.current.animationFrameId).not.toBeNull();
     });
 
-    it("should append UART output during run", () => {
-      const emulator = createMockEmulator({
-        continue_for_steps: vi.fn(() => 100_000n),
-        take_uart_output: vi.fn(() => new TextEncoder().encode("hello"))
-      });
-
+    it("pause returns to ready and cancels frame", async () => {
+      const file = new File([new Uint8Array([1])], "p.elf");
       const { result } = renderHook(() => useEmulatorStore());
 
-      act(() => {
-        useEmulatorStore.setState({ emulator });
-        result.current.startRun();
-        rafCallback?.(0);
+      await act(async () => {
+        await result.current.loadFile(file, "elf");
       });
+      act(() => result.current.run());
+      act(() => result.current.pause());
 
-      expect(result.current.uartText).toBe("hello");
-    });
-
-    it("should stop running when emulator halts", () => {
-      const emulator = createMockEmulator({
-        continue_for_steps: vi.fn(() => 100_000n),
-        is_halted: vi.fn()
-          .mockReturnValueOnce(false)
-          .mockReturnValue(true)
-      });
-
-      const { result } = renderHook(() => useEmulatorStore());
-
-      act(() => {
-        useEmulatorStore.setState({ emulator });
-        result.current.startRun();
-        rafCallback?.(0);
-      });
-
-      expect(result.current.executionState).toBe(EmulatorStatus.Paused);
-      expect(result.current.animationFrameId).toBe(null);
-      expect(result.current.boardHalted).toBe(true);
-    });
-
-    it("should pause and record error when run loop throws", () => {
-      const emulator = createMockEmulator({
-        continue_for_steps: vi.fn(() => {
-          throw new Error("run failed");
-        })
-      });
-
-      const { result } = renderHook(() => useEmulatorStore());
-
-      act(() => {
-        useEmulatorStore.setState({ emulator });
-        result.current.startRun();
-        rafCallback?.(0);
-      });
-
-      expect(result.current.executionState).toBe(EmulatorStatus.Paused);
-      expect(result.current.animationFrameId).toBe(null);
-      expect(result.current.error).toBe("run failed");
-    });
-
-    it("should cancel animation frame and refresh debug state when paused", () => {
-      const cancelSpy = vi.spyOn(window, "cancelAnimationFrame");
-      const emulator = createMockEmulator({
-        read_pc: vi.fn(() => 0x80000008n),
-        clock_cycles: vi.fn(() => 88n)
-      });
-
-      const { result } = renderHook(() => useEmulatorStore());
-
-      act(() => {
-        useEmulatorStore.setState({
-          emulator,
-          executionState: EmulatorStatus.Running,
-          animationFrameId: 456
-        });
-        result.current.pauseRun();
-      });
-
-      expect(cancelSpy).toHaveBeenCalledWith(456);
-      expect(result.current.executionState).toBe(EmulatorStatus.Paused);
-      expect(result.current.animationFrameId).toBe(null);
-      expect(result.current.pc).toBe(0x80000008n);
-      expect(result.current.cycles).toBe(88n);
-      expect(result.current.regs[1]).toBe(10n);
+      expect(result.current.status).toBe("ready");
+      expect(result.current.animationFrameId).toBeNull();
+      expect(window.cancelAnimationFrame).toHaveBeenCalled();
     });
   });
 
-  describe("UART Output", () => {
-    it("should append UART output when stepping once", async () => {
-      const emulator = createMockEmulator({
-        take_uart_output: vi.fn(() => new TextEncoder().encode("step output"))
-      });
-
+  describe("reset", () => {
+    it("re-instantiates emulator from cached bytes on reset", async () => {
+      const file = new File([new Uint8Array([1])], "p.elf");
       const { result } = renderHook(() => useEmulatorStore());
 
       await act(async () => {
-        useEmulatorStore.setState({ emulator });
-        await result.current.stepOnce();
+        await result.current.loadFile(file, "elf");
+      });
+      const firstEmu = result.current.emulator as unknown as MockEmulator;
+
+      await act(async () => {
+        await result.current.reset();
       });
 
-      expect(result.current.uartText).toBe("step output");
+      expect(firstEmu.free).toHaveBeenCalledOnce();
+      expect(mockWasm.WasmEmulator.from_elf_bytes).toHaveBeenCalledTimes(2);
+      expect(result.current.emulator).not.toBeNull();
+      expect(result.current.status).toBe("ready");
+      expect(result.current.pc).toBe(0x80000000n);
+      expect(result.current.uartText).toBe("");
     });
 
-    it("should keep UART output within maximum buffer length", async () => {
-      const emulator = createMockEmulator({
-        take_uart_output: vi.fn(() => new TextEncoder().encode("b".repeat(20)))
-      });
-
+    it("falls back to idle teardown when no program is cached", async () => {
+      // Simulate a failed load that never populated lastLoadedBytes (e.g., WASM
+      // init failure before instantiation). Reset should clear to idle, not throw.
+      vi.mocked(wasmLoader.loadWasmModule).mockRejectedValue(new Error("wasm unavailable"));
+      const file = new File([new Uint8Array([1])], "p.elf");
       const { result } = renderHook(() => useEmulatorStore());
 
       await act(async () => {
-        useEmulatorStore.setState({
-          emulator,
-          uartText: "a".repeat(999_990)
-        });
-        await result.current.stepOnce();
+        await result.current.loadFile(file, "elf");
       });
 
-      expect(result.current.uartText).toHaveLength(1_000_000);
-      expect(result.current.uartText.startsWith("a".repeat(999_980))).toBe(true);
-      expect(result.current.uartText.endsWith("b".repeat(20))).toBe(true);
+      expect(result.current.status).toBe("error");
+      expect(result.current.lastLoadedBytes).toBeNull();
+
+      // Restore the mock so reset can re-instantiate (though there's nothing to
+      // re-instantiate — it should take the idle-teardown branch).
+      vi.mocked(wasmLoader.loadWasmModule).mockResolvedValue(mockWasm as unknown as WasmModule);
+
+      await act(async () => {
+        await result.current.reset();
+      });
+
+      expect(result.current.status).toBe("idle");
+      expect(result.current.emulator).toBeNull();
+      expect(result.current.error).toBeNull();
+    });
+  });
+
+  describe("setSpeed", () => {
+    it("updates speed preset", () => {
+      const { result } = renderHook(() => useEmulatorStore());
+      act(() => result.current.setSpeed("turbo"));
+      expect(result.current.speed).toBe("turbo");
+    });
+  });
+
+  describe("enterDebugMode / exitDebugMode", () => {
+    it("enters debug mode: emulator → rvdb, ticks the REPL chain, drains output", async () => {
+      const file = new File([new Uint8Array([1])], "prog.elf");
+      const { result } = renderHook(() => useEmulatorStore());
+
+      await act(async () => {
+        await result.current.loadFile(file, "elf");
+      });
+      const emu = result.current.emulator as MockEmulator;
+
+      // into_rvdb resolves to an rvdb whose first tick yields some REPL output
+      // and then a second tick (pending — simulating readline waiting for input).
+      const rvdbOutput = new TextEncoder().encode("(rvdb) ");
+      const firstTickReturn = { exit: false, cancel: false };
+      // Second tick stays pending; we resolve it to observe the exit path.
+      const { promise: secondTick, resolve: resolveSecondTick } =
+        Promise.withResolvers<{ exit: boolean; cancel: boolean }>();
+
+      const mockHandle = createMockRvdbHandle({
+        take_repl_output: vi.fn()
+          .mockReturnValueOnce(rvdbOutput)
+          .mockReturnValue(new Uint8Array()),
+        read_pc: vi.fn((): bigint => 0x80000abcn),
+        clock_cycles: vi.fn((): bigint => 42n)
+      });
+      const mockRvdb = createMockRvdb({
+        tick: vi.fn()
+          .mockResolvedValueOnce(firstTickReturn)
+          .mockReturnValueOnce(secondTick)
+      }, mockHandle);
+      emu.into_rvdb.mockResolvedValue(mockRvdb);
+
+      await act(async () => {
+        await result.current.enterDebugMode();
+      });
+
+      // Microtask flush so the first tick resolves + drains.
+      await act(async () => { await Promise.resolve(); });
+
+      expect(result.current.mode).toBe("debug");
+      expect(result.current.emulator).toBeNull();
+      expect(result.current.rvdb).toBe(mockRvdb);
+      expect(result.current.rvdbText).toBe("(rvdb) ");
+      expect(result.current.pc).toBe(0x80000abcn);
+    expect(mockHandle.read_regs).toHaveBeenCalled();
+
+      // Now exit: resolve the pending second tick so tick-chain completion runs.
+      await act(async () => {
+        result.current.exitDebugMode();
+        resolveSecondTick({ exit: false, cancel: false });
+        await secondTick;
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(result.current.mode).toBe("run");
+      expect(result.current.rvdb).toBeNull();
+      expect(result.current.emulator).not.toBeNull();
+      // into_emulator was called on the rvdb to recover a WasmEmulator.
+      expect(mockRvdb.into_emulator).toHaveBeenCalled();
+    });
+
+    it("exitDebugMode is blocked while debugRunning (continue in flight)", async () => {
+      const file = new File([new Uint8Array([1])], "prog.elf");
+      const { result } = renderHook(() => useEmulatorStore());
+      await act(async () => { await result.current.loadFile(file, "elf"); });
+      const emu = result.current.emulator as MockEmulator;
+
+      const { promise: pendingTick } = Promise.withResolvers<{ exit: boolean; cancel: boolean }>();
+      const mockRvdb = createMockRvdb({ tick: vi.fn().mockReturnValue(pendingTick) });
+      emu.into_rvdb.mockResolvedValue(mockRvdb);
+
+      await act(async () => { await result.current.enterDebugMode(); });
+
+      // Force debugRunning true — simulating a continue in flight.
+      act(() => useEmulatorStore.setState({ debugRunning: true }));
+
+      await act(async () => {
+        result.current.exitDebugMode();
+        await Promise.resolve();
+      });
+
+      // Still in debug mode; exitDebugMode is a no-op while debugRunning.
+      expect(result.current.mode).toBe("debug");
+    });
+
+    it("keeps debug status running while rvdb continue is active even when PC is stable", async () => {
+      const file = new File([new Uint8Array([1])], "prog.elf");
+      const { result } = renderHook(() => useEmulatorStore());
+      await act(async () => { await result.current.loadFile(file, "elf"); });
+      const emu = result.current.emulator as MockEmulator;
+
+      const { promise: pendingTick, resolve: resolvePendingTick } =
+        Promise.withResolvers<{ exit: boolean; cancel: boolean }>();
+      const mockHandle = createMockRvdbHandle({
+        is_continue_running: vi.fn((): boolean => true),
+        read_pc: vi.fn((): bigint => 0x80000abcn)
+      });
+      const mockRvdb = createMockRvdb({
+        tick: vi.fn().mockReturnValue(pendingTick)
+      }, mockHandle);
+      emu.into_rvdb.mockResolvedValue(mockRvdb);
+
+      await act(async () => { await result.current.enterDebugMode(); });
+
+      await waitFor(() => expect(result.current.status).toBe("running"));
+      expect(result.current.debugRunning).toBe(true);
+      expect(result.current.pc).toBe(0x80000abcn);
+
+      await act(async () => {
+        await result.current.reset();
+        resolvePendingTick({ exit: false, cancel: true });
+        await pendingTick;
+        await Promise.resolve();
+      });
+    });
+
+    it("reset retires a borrowed debug session and returns to run", async () => {
+      const file = new File([new Uint8Array([1])], "prog.elf");
+      const { result } = renderHook(() => useEmulatorStore());
+      await act(async () => { await result.current.loadFile(file, "elf"); });
+      const emu = result.current.emulator as MockEmulator;
+
+      const { promise: pendingTick, resolve: resolvePendingTick } =
+        Promise.withResolvers<{ exit: boolean; cancel: boolean }>();
+      const mockHandle = createMockRvdbHandle();
+      const mockRvdb = createMockRvdb({
+        tick: vi.fn().mockReturnValue(pendingTick),
+        free: vi.fn()
+      }, mockHandle);
+      emu.into_rvdb.mockResolvedValue(mockRvdb);
+
+      await act(async () => { await result.current.enterDebugMode(); });
+      expect(result.current.mode).toBe("debug");
+
+      await act(async () => { await result.current.reset(); });
+
+      expect(result.current.mode).toBe("run");
+      expect(result.current.rvdb).toBeNull();
+      expect(mockHandle.cancel_continue).toHaveBeenCalledOnce();
+      expect(mockHandle.push_repl_input).toHaveBeenCalledOnce();
+      expect(mockRvdb.free).not.toHaveBeenCalled();
+      expect(result.current.emulator).not.toBeNull();
+
+      await act(async () => {
+        resolvePendingTick({ exit: false, cancel: true });
+        await pendingTick;
+        await Promise.resolve();
+      });
+
+      expect(mockRvdb.free).toHaveBeenCalledOnce();
+      expect(mockHandle.free).toHaveBeenCalledOnce();
+      expect(result.current.mode).toBe("run");
     });
   });
 });
