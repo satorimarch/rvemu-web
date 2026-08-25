@@ -1,8 +1,8 @@
 #!/bin/bash
 set -e
 
-CACHED_TOOLCHAIN_BIN="$HOME/.cache/rvemu-web/riscv-toolchain/bin"
-RESOURCES_DIR="riscv-emulator/test_resources"
+CACHED_TOOLCHAIN_BIN="$HOME/.cache/here-web/riscv-toolchain/bin"
+RESOURCES_DIR="here/test_resources"
 OUTPUT_DIR="public/test-programs"
 
 # Try to find toolchain from PATH first

@@ -47,7 +47,7 @@ jobs:
         id: cache-toolchain
         uses: actions/cache@v4
         with:
-          path: ~/.cache/rvemu-web/riscv-toolchain
+          path: ~/.cache/here-web/riscv-toolchain
           key: riscv-toolchain-2026.03.28
 
       - name: Download RISC-V toolchain
@@ -62,7 +62,7 @@ jobs:
           mkdir -p public/test-programs
           curl -fL --retry 3 --retry-all-errors \
             -o public/test-programs/fw_payload.bin \
-            https://github.com/satorimarch/rvemu-web/releases/download/assets/fw_payload.bin
+            https://github.com/here-emulator/here/releases/download/prebuilt-kernels/linux-busybox-rv64gc-with-dtb.bin
 
       - name: Generate test programs manifest
         run: node scripts/generate-manifest.js

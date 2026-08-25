@@ -1,18 +1,18 @@
 # AGENTS.md - Developer Guide for AI Coding Agents
 
-This file contains essential information for AI coding agents working on the rvemu-web codebase.
+This file contains essential information for AI coding agents working on the HERE Web codebase.
 
 ## Project Overview
 
-**RVEmu-Web** is a web frontend for the RISC-V emulator, enabling full-system emulation directly in the browser.
+**HERE Web** is a web frontend for the HERE Emulator, enabling full-system emulation directly in the browser.
 
 ### Architecture
 
-- **Backend**: This project is a **web wrapper** for `riscv-emulator` (Git submodule in `riscv-emulator/`)
-- **Core Emulator**: Written in **Rust**, implements a complete RISC-V RV64 instruction set emulator
+- **Backend**: This project is a **web wrapper** for HERE Emulator (Git submodule in `here/`)
+- **Core Emulator**: HERE Emulator, written in **Rust**, implements a complete RISC-V RV64 instruction set emulator
 - **Compilation**: The Rust emulator is compiled to **WebAssembly** using `wasm-pack`
 - **Execution**: The entire emulator **runs completely in the frontend** - no backend server required
-- **UI**: React + TypeScript interface provides controls, terminal, and debug views
+- **UI**: React + TypeScript interface provides controls, terminal, and debug views for HERE Emulator
 
 ### Technology Stack
 
@@ -26,19 +26,19 @@ This file contains essential information for AI coding agents working on the rve
 ### Project Relationship
 
 ```
-riscv-emulator (Rust)          →  Compile with wasm-pack  →  WebAssembly
+HERE Emulator (Rust)          →  Compile with wasm-pack  →  WebAssembly
        ↓                                                             ↓
   Git Submodule                                              src/wasm-pkg/
        ↓                                                             ↓
-riscv-emulator/                                            Frontend loads WASM
+here/                                                       Frontend loads WASM
   ├── src/ (Rust source)                                          ↓
   ├── Cargo.toml                                          Runs in Browser
   └── test_resources/                                    (No backend needed)
 ```
 
 **Key Points:**
-- This repo (`rvemu-web`) does NOT contain the emulator logic itself
-- Emulator logic is in the `riscv-emulator` submodule (Rust codebase)
+- This repo (`here-web`) does NOT contain the emulator logic itself
+- Emulator logic is in the HERE Emulator submodule (`here/`, Rust codebase)
 - Changes to emulator require editing Rust code and rebuilding WASM
 - This project only handles UI, state management, and WASM integration
 
@@ -75,7 +75,7 @@ npx tsc -b
 
 The project includes built-in RISC-V test programs that are compiled during CI/CD:
 
-- **Source**: Located in `riscv-emulator/test_resources/src/`
+- **Source**: Located in `here/test_resources/src/`
 - **Programs**: `fib`, `prime`, `matrix_mul`, `io_bench`, `clint`, `float`, `ecall_test`, `interrupt_test`, `trap_test`, `virtio_blk_test`, `main`
 - **Toolchain**: Uses `riscv64-unknown-elf-gcc` (downloaded in CI, or use system-installed)
 - **Output**: ELF files are bundled in `public/test-programs/` during build
@@ -300,8 +300,8 @@ const loadProgram = useEmulatorStore((s) => s.loadProgram);
 - **No formatter configured**: Maintain consistency with existing code style
 - **Test framework**: Vitest with React Testing Library configured, see Testing section above
 - **Path aliases required**: Always use `@/` and `@wasm/` aliases, not relative paths for src imports
-- **WASM build**: Run `npm run wasm:build` after changing Rust code in `riscv-emulator/` submodule
-- **Git submodule**: The `riscv-emulator/` directory is a git submodule, handle with care
+- **WASM build**: Run `npm run wasm:build` after changing Rust code in `here/` submodule
+- **Git submodule**: The `here/` directory is a git submodule, handle with care
 
 ## Additional Context
 

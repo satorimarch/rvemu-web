@@ -1,3 +1,3 @@
-# RVEmu-Web
+# HERE Web
 
-Online version of [RISC-V Emulator](https://github.com/WanDejun/riscv-emulator) with its core features.
+Online version of [HERE Emulator](https://github.com/here-emulator/here) with its core features.

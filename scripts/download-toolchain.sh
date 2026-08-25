@@ -2,7 +2,7 @@
 set -e
 
 TOOLCHAIN_URL="https://github.com/riscv-collab/riscv-gnu-toolchain/releases/download/2026.03.28/riscv64-elf-ubuntu-24.04-gcc.tar.xz"
-CACHE_DIR="$HOME/.cache/rvemu-web/riscv-toolchain"
+CACHE_DIR="$HOME/.cache/here-web/riscv-toolchain"
 
 if [ -d "$CACHE_DIR/bin" ]; then
   echo "Toolchain already cached at $CACHE_DIR"

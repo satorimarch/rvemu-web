@@ -14,7 +14,7 @@ const STATUS_META: Record<
   error: { label: "Error", className: "status-error" }
 };
 
-const WRAPPER_REPO = "https://github.com/satorimarch/rvemu-web";
+const WRAPPER_REPO = "https://github.com/here-emulator/here-web";
 
 interface StatusBarProps {
   helpOpen: boolean;
@@ -31,7 +31,7 @@ export function StatusBar({ helpOpen, onOpenHelp, shortcutButtonRef }: StatusBar
   return (
     <footer className="status-bar" aria-label="Emulator status">
       <div className="status-brand">
-        <span className="brand-text">RISC-V Emulator</span>
+        <span className="brand-text">HERE Emulator</span>
       </div>
       <div className="status-stats">
         <span className="stat">
@@ -69,7 +69,7 @@ export function StatusBar({ helpOpen, onOpenHelp, shortcutButtonRef }: StatusBar
           target="_blank"
           rel="noreferrer"
         >
-          rvemu-web ↗
+          HERE Web ↗
         </a>
       </div>
     </footer>
